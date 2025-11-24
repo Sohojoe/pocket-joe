@@ -43,8 +43,8 @@ This document maps every class in the legacy `pocketflow` library to its equival
 
 We have 100% coverage.
 
-*   **Simplicity:** We replace 11 classes with **1 Concept (Policy)**.
-*   **Flexibility:** We replace rigid inheritance with **Composition (Calling functions)**.
-*   **Power:** We replace custom graph engines with **Python Control Flow**.
+* **Simplicity:** We replace 11 classes with **1 Concept (Policy)**.
+* **Flexibility:** We replace rigid inheritance with **Composition (Calling functions)**.
+* **Power:** We replace custom graph engines with **Python Control Flow**.
 
 We are good to go.

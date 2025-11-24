@@ -21,25 +21,25 @@
 
 ### Phase 1: The Kernel (Core Primitives)
 
-* [ ] **Create `pocket_joe/core.py`**
+* [x] **Create `pocket_joe/core.py`**
   * Define `Action` (Frozen Dataclass).
   * Define `Context` (Protocol).
   * Define `Policy` (Type Alias).
-* [ ] **Create `pocket_joe/registry.py`**
+* [x] **Create `pocket_joe/registry.py`**
   * Implement `Registry` class (Singleton or Context-bound).
   * Implement `@register` decorator with metadata support (MCP schema).
 
 ### Phase 2: The Wiring (Decorators & Composition)
 
-* [ ] **Create `pocket_joe/policy_decorators.py`**
+* [x] **Create `pocket_joe/policy_decorators.py`**
   * Implement `@loop_wrapper(max_turns)`: Handles iteration and termination.
   * Implement `@invoke_action`: Handles tool execution and history updates.
 
 ### Phase 3: The Engine (Runtimes)
 
-* [ ] **Create `pocket_joe/memory_runtime.py`**
+* [x] **Create `pocket_joe/memory_runtime.py`**
   * Implement `InMemoryRunner`: Simple recursive execution.
-* [ ] **Create `pocket_joe/durable_runtime.py`** (Skeleton)
+* [x] **Create `pocket_joe/durable_runtime.py`** (Skeleton)
   * Define `SuspendExecution` exception.
   * Implement basic Replay logic (store/load history).
 
@@ -52,13 +52,13 @@
 
 ### Phase 5: Validation & Migration
 
-* [ ] **Unit Tests**: Test Core, Decorators, and Runtimes.
-* [ ] **Port Cookbook**:
+* [x] **Unit Tests**: Test Core, Decorators, and Runtimes.
+* [x] **Port Cookbook**:
   * `search_agent` (Simple ReAct).
   * `youtube_summarizer` (Map/Reduce).
-* [ ] **Cleanup**: Remove legacy `pocketflow/` code and `to-delete/` folder.
+* [x] **Cleanup**: Remove legacy `pocketflow/` code and `to-delete/` folder.
 
-## 3. Immediate Next Steps
+## 3. Status
 
-1. Scaffold `pocket_joe/core.py` and `pocket_joe/registry.py`.
-2. Move the validated decorator logic from `decorator_design.py` to `pocket_joe/policy_decorators.py`.
+All phases are complete. The core library is implemented, tested, and documented. Cookbook examples are available.
+
