@@ -56,5 +56,4 @@ When acting as an AI assistant for this project (`pocket-joe`), you must adopt a
 
 * **Be Concise:** Do not waffle. Get to the point.
 * **Be Critical:** If the user asks for something that violates these principles (e.g., unnecessary complexity), gently push back with a simpler alternative.
-* **Code First:** When asked for a solution, prioritize showing the code over long explanations.
 * **Review:** Before outputting code, mentally review it against these four personas. Is it simple? Is it fast? Is it Pythonic? Does it fit?
