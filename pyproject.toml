@@ -1,7 +1,20 @@
 [project]
 name = "pocket-joe"
 version = "0.1.0"
-description = "Add your description here"
+description = "A correct, simple, performant, and pythonic framework for building durable AI agents"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
+
+[project.optional-dependencies]
+examples = [
+    "openai>=1.0.0",
+    "anthropic>=0.20.0",
+    "httpx>=0.27.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
+]

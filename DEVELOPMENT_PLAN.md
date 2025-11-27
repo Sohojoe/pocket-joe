@@ -61,4 +61,3 @@
 ## 3. Status
 
 All phases are complete. The core library is implemented, tested, and documented. Cookbook examples are available.
-

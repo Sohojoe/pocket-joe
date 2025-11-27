@@ -1,22 +1,26 @@
 from typing import Any, List, Callable
-from pocket_joe.core import Action, Context
+from pocket_joe.core import Action, Context, Step
 from pocket_joe.registry import Registry
 
-class InMemoryContext:
-    def __init__(self, runner: 'InMemoryRunner'):
+class InMemoryContext(Context):
+    def __init__(self, runner: 'InMemoryRunner', ledger: list[Step]):
         self.runner = runner
+        self.ledger = ledger
 
-    async def call(self, policy_name: str, action: Action, decorators: List[Callable] = []) -> Any:
-        return await self.runner.execute(policy_name, action, decorators)
+    async def call(self, action: Action, decorators: List[Callable] = []) -> Any:
+        return await self.runner.execute(action, decorators)
+    
+    def get_ledger(self) -> list[Step]:
+        return self.ledger
 
 class InMemoryRunner:
-    def __init__(self, registry: Registry = None):
-        self.registry = registry or Registry.get_instance()
+    def __init__(self, registry: Registry):
+        self.registry = registry
 
-    async def execute(self, policy_name: str, action: Action, decorators: List[Callable] = []) -> Any:
-        policy_metadata = self.registry.get(policy_name)
+    async def execute(self, action: Action, decorators: List[Callable] = []) -> Any:
+        policy_metadata = self.registry.get(action.policy)
         if not policy_metadata:
-            raise ValueError(f"Unknown policy: {policy_name}")
+            raise ValueError(f"Unknown policy: {action.policy}")
         
         policy_func = policy_metadata.func
         
@@ -26,5 +30,5 @@ class InMemoryRunner:
         for dec in reversed(decorators):
             wrapped_func = dec(wrapped_func)
             
-        ctx = InMemoryContext(self)
+        ctx = InMemoryContext(self, [])
         return await wrapped_func(action, ctx)

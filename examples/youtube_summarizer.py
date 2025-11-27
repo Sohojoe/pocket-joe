@@ -1,5 +1,5 @@
 import asyncio
-from pocket_joe import Action, Registry, loop_wrapper, invoke_action, InMemoryRunner
+from pocket_joe import Action, Registry, Context, InMemoryRunner, loop_wrapper, invoke_action
 
 registry = Registry()
 

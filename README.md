@@ -24,16 +24,22 @@ uv sync
 
 ### Running Examples
 
+First, install with examples dependencies:
+
+```bash
+uv sync --extra examples
+```
+
 #### Search Agent (ReAct)
 
 ```bash
-PYTHONPATH=. uv run python cookbook/search_agent.py
+uv run python examples/search_agent.py
 ```
 
 #### YouTube Summarizer
 
 ```bash
-PYTHONPATH=. uv run python cookbook/youtube_summarizer.py
+uv run python examples/youtube_summarizer.py
 ```
 
 ## Architecture
