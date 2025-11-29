@@ -9,7 +9,7 @@ import json
 from typing import Any
 import uuid
 
-from pocket_joe import Action, Context, Step, policy_spec
+from pocket_joe import Action, Context, Step, policy_spec_mcp_tool
 from openai import AsyncOpenAI 
 
 
@@ -17,7 +17,7 @@ def ledger_to_llm_messages(ledger: list[Step]) -> list[dict[str, Any]]:
     messages = []
     for step in ledger:
         if step.type == "text":
-            messages.append({"role": step.actor, "content": step.payload["text"]})
+            messages.append({"role": step.actor, "content": step.payload["content"]})
         elif step.type == "action_result":
             # Tool messages require tool_call_id
             messages.append({
@@ -28,16 +28,21 @@ def ledger_to_llm_messages(ledger: list[Step]) -> list[dict[str, Any]]:
         # Note: We ignore "action_call" steps as the LLM implies them via its previous output
     return messages
 
-def actions_to_tools(actions: set[str],) -> list[dict]:
+def actions_to_tools(actions: set[str], ctx: Context) -> list[dict]:
+    """Convert policy names to OpenAI tool schemas using registry metadata."""
+    registry = ctx.get_registry()
     tools = []
     for name in actions:
-        # TODO get the full tool spec from registry
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": name
-            }
-        })
+        policy = registry.get(name)
+        if policy:
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": policy.meta.description,
+                    "parameters": policy.meta.input_schema
+                }
+            })
     return tools
 
 def map_response_to_steps(response: Any) -> list[Step]:
@@ -49,7 +54,7 @@ def map_response_to_steps(response: Any) -> list[Step]:
             id=str(uuid.uuid4()),
             actor="assistant",
             type="text",
-            payload={"text": msg.content}
+            payload={"content": msg.content}
         ))
         
     if msg.tool_calls:
@@ -66,17 +71,17 @@ def map_response_to_steps(response: Any) -> list[Step]:
             
     return new_steps
 
-@policy_spec(
+@policy_spec_mcp_tool(
     description="Calls OpenAI GPT-4 with tool support",
-    input_schema={"ledger": "List[Step]", "edges": "Set[str]"}
 )
 async def openai_llm_policy_v1(action: Action, ctx: Context) -> list[Step]:
 
+
     # 1. Map Ledger to LLM Messages
-    messages = action.payload['messages']
+    messages = ledger_to_llm_messages(ctx.get_ledger())
 
     # 2. Map Allowed Actions to Tools
-    tools = actions_to_tools(action.actions)
+    tools = actions_to_tools(action.actions, ctx)
 
     # 3. Call LLM TODO: add retry logic etc
     openai = AsyncOpenAI()

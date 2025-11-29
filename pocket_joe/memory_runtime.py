@@ -1,6 +1,7 @@
 from typing import Any, List, Callable
 from pocket_joe.core import Action, Context, Step
 from pocket_joe.registry import Registry
+from pocket_joe.policy_spec_mcp import unpack_params
 
 class InMemoryContext(Context):
     def __init__(self, runner: 'InMemoryRunner', ledger: list[Step]):
@@ -12,17 +13,21 @@ class InMemoryContext(Context):
     
     def get_ledger(self) -> list[Step]:
         return self.ledger
+    
+    def get_registry(self) -> Registry:
+        return self.runner.registry
 
 class InMemoryRunner:
     def __init__(self, registry: Registry):
         self.registry = registry
 
     async def execute(self, action: Action, decorators: List[Callable] = []) -> Any:
-        policy_metadata = self.registry.get(action.policy)
-        if not policy_metadata:
+        registered_policy = self.registry.get(action.policy)
+        if not registered_policy:
             raise ValueError(f"Unknown policy: {action.policy}")
         
-        policy_func = policy_metadata.func
+        policy_func = registered_policy.func
+        policy_meta = registered_policy.meta
         
         # Apply decorators (Outer wraps Inner)
         # decorators=[loop, invoke] -> loop(invoke(policy))
@@ -30,5 +35,16 @@ class InMemoryRunner:
         for dec in reversed(decorators):
             wrapped_func = dec(wrapped_func)
             
-        ctx = InMemoryContext(self, [])
-        return await wrapped_func(action, ctx)
+        ctx = InMemoryContext(self, action.payload)
+        
+        # Unpack parameters from the last step in action.payload if it's an action_call
+        # Convention: action_call steps have payload = {"policy": "...", "payload": {...params}}
+        params: dict[str, Any] = {}
+        if action.payload:
+            last_step = action.payload[-1]
+            if last_step.type == "action_call" and isinstance(last_step.payload, dict):
+                tool_params = last_step.payload.get("payload", {})
+                if isinstance(tool_params, dict):
+                    params = unpack_params(policy_meta, tool_params)
+        
+        return await wrapped_func(action, ctx, **params)

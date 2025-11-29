@@ -4,13 +4,15 @@ version = "0.1.0"
 description = "A correct, simple, performant, and pythonic framework for building durable AI agents"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+]
 
 [project.optional-dependencies]
 examples = [
     "openai>=1.0.0",
     "anthropic>=0.20.0",
     "httpx>=0.27.0",
+    "ddgs>=9.9.1",
 ]
 
 [dependency-groups]

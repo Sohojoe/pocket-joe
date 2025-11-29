@@ -31,7 +31,7 @@ class TestPocketJoeCore(unittest.IsolatedAsyncioTestCase):
     async def test_simple_policy_execution(self):
         """Test registering and running a simple policy."""
         
-        @self.registry.register("echo")
+        @self.registry.register_policy("echo")
         async def echo_policy(action: Action, ctx: Context):
             return f"Echo: {action.payload}"
             
@@ -41,11 +41,11 @@ class TestPocketJoeCore(unittest.IsolatedAsyncioTestCase):
     async def test_nested_policy_call(self):
         """Test a policy calling another policy via Context."""
         
-        @self.registry.register("worker")
+        @self.registry.register_policy("worker")
         async def worker(action: Action, ctx: Context):
             return action.payload * 2
             
-        @self.registry.register("manager")
+        @self.registry.register_policy("manager")
         async def manager(action: Action, ctx: Context):
             # Call worker
             res = await ctx.call("worker", Action(payload=10))
@@ -58,12 +58,12 @@ class TestPocketJoeCore(unittest.IsolatedAsyncioTestCase):
         """Test the loop_wrapper and invoke_action decorators."""
         
         # 1. Define a tool
-        @self.registry.register("tool")
+        @self.registry.register_policy("tool")
         async def tool(action: Action, ctx: Context):
             return "ToolResult"
             
         # 2. Define a decider that uses the tool then finishes
-        @self.registry.register("decider")
+        @self.registry.register_policy("decider")
         async def decider(action: Action, ctx: Context):
             if not action.history:
                 return {"tool_call": "tool", "tool_args": "arg"}
@@ -75,7 +75,7 @@ class TestPocketJoeCore(unittest.IsolatedAsyncioTestCase):
                 return {"done": True, "value": "Fail"}
 
         # 3. Define the agent that wires them up
-        @self.registry.register("agent")
+        @self.registry.register_policy("agent")
         async def agent(action: Action, ctx: Context):
             # Allow the tool
             scoped_action = replace(action, edges=("tool",))

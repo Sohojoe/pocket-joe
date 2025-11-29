@@ -1,63 +1,102 @@
 from dataclasses import dataclass
-from typing import Any
-from pocket_joe.core import Policy
+from typing import Any, Dict
 
-@dataclass
-class PolicyMetadata:
-    name: str
-    description: str
-    input_schema: dict[str, Any]
+from .core import Policy
+from .policy_spec_mcp import PolicyMetadata as SpecPolicyMetadata, PolicyKind
+
+
+@dataclass(frozen=True)
+class RegisteredPolicy:
+    """
+    What the registry stores for each policy:
+    - func: the actual callable
+    - meta: the PolicyMetadata attached by @policy_spec / @policy_spec_mcp_*
+    """
     func: Policy
+    meta: SpecPolicyMetadata
+
 
 class Registry:
-    _instance = None
-    
+    _instance: "Registry | None" = None
+
     def __init__(self, *policies: Policy):
         """
         Initialize registry with zero or more @policy_spec decorated functions.
-        Each policy is registered using its __policy_name__ attribute.
-        
-        Usage:
-            registry = Registry(policy1, policy2, policy3)
+        Each policy is registered using the name from its PolicyMetadata.
         """
-        self._policies: dict[str, PolicyMetadata] = {}
-        for func in policies:
-            self.register_policy(func)
+        self._policies: Dict[str, RegisteredPolicy] = {}
+        for p in policies:
+            self.register_policy(p)
+
+    # ---- singleton helper -------------------------------------------------
 
     @classmethod
-    def get_instance(cls):
+    def get_instance(cls) -> "Registry":
         if cls._instance is None:
-            cls._instance = Registry()
+            cls._instance = cls()
         return cls._instance
-    
-    def register_policy(self, func: Policy, alias: str | None = None):
+
+    # ---- registration ------------------------------------------------------
+
+    def register_policy(self, func: Policy, alias: str | None = None) -> Policy:
         """
-        Register a policy function that has @policy_spec metadata.
-        Runtime can override the name with an alias.
-        
-        Usage:
-            registry.register_policy(llm_policy)  # uses __policy_name__
-            registry.register_policy(llm_policy, alias="llm")  # overrides name
+        Register a policy function that has been decorated with @policy_spec,
+        @policy_spec_mcp_tool, or @policy_spec_mcp_resource.
+
+        We expect the decorator to have attached a `__policy__` attribute
+        containing a SpecPolicyMetadata instance.
         """
-        if not hasattr(func, "__policy_name__"):
+        meta: SpecPolicyMetadata | None = getattr(func, "__policy__", None)
+        if meta is None:
             raise ValueError(
-                f"Function {func.__name__} is missing @policy_spec metadata. "
-                f"All policies must use @policy_spec decorator."
+                f"Policy function {func.__name__} is not decorated with @policy_spec"
             )
-        
-        name = alias or func.__policy_name__
-        self._policies[name] = PolicyMetadata(
-            name=name,
-            description=func.__policy_description__,
-            input_schema=func.__policy_input_schema__,
-            func=func
-        )
+
+        name = alias or meta.name
+        self._policies[name] = RegisteredPolicy(func=func, meta=meta)
         return func
 
-    def get(self, name: str) -> PolicyMetadata | None:
+    # ---- lookup ------------------------------------------------------------
+
+    def get(self, name: str) -> RegisteredPolicy | None:
         return self._policies.get(name)
 
-# # Global instance for convenience
+    def all(self) -> dict[str, RegisteredPolicy]:
+        return dict(self._policies)
+
+    # ---- MCP-specific views -----------------------------------------------
+
+    def mcp_tools(self) -> dict[str, RegisteredPolicy]:
+        """
+        Policies that should be exposed as MCP tools (kind == 'tool').
+        """
+        return {
+            name: rp
+            for name, rp in self._policies.items()
+            if rp.meta.kind == "tool"
+        }
+
+    def mcp_resources(self) -> dict[str, RegisteredPolicy]:
+        """
+        Policies that should be exposed as MCP resources (kind == 'resource').
+        """
+        return {
+            name: rp
+            for name, rp in self._policies.items()
+            if rp.meta.kind == "resource"
+        }
+
+    def internal_only(self) -> dict[str, RegisteredPolicy]:
+        """
+        Policies that are not surfaced to MCP (kind == 'none_mcp').
+        """
+        return {
+            name: rp
+            for name, rp in self._policies.items()
+            if rp.meta.kind == "none_mcp"
+        }
+
+# Convenience global, if you want it:
 # _registry = Registry.get_instance()
 # register = _registry.register
 # get_policy = _registry.get
