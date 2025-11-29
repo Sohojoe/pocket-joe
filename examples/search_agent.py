@@ -6,13 +6,14 @@ from pocket_joe import (
     Registry, Context, 
     InMemoryRunner, 
     # loop_wrapper, invoke_action,
+    invoke_action_wrapper,
     )
 from dataclasses import replace
 from examples.utils import openai_llm_policy_v1, search_web_duckduckgo_policy
 
 # --- Tools ---
 
-@policy_spec_mcp_resource(description="Orchestrator with LLM and search")
+@policy_spec_mcp_tool(description="Orchestrator with LLM and search")
 async def search_agent(action: Action, ctx: Context) -> list[Step]:
     """
     Orchestrator that gives the LLM access to web search.
@@ -36,14 +37,9 @@ async def search_agent(action: Action, ctx: Context) -> list[Step]:
     # Call LLM with decorators: loop until done, auto-execute tool calls
     steps = await ctx.call(
         action=llm_action,
-        # decorators=[loop_wrapper(max_turns=5), invoke_action()]
+        decorators=[invoke_action_wrapper()]
+        # decorators=[loop_wrapper(max_turns=5), invoke_action_wrapper()]
     )
-
-    web_action = Action(
-        policy="search_web_policy",
-        payload=steps,
-    )
-    steps = await ctx.call(action=web_action)
 
     return steps
 
