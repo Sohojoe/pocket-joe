@@ -9,11 +9,11 @@ import json
 from typing import Any
 import uuid
 
-from pocket_joe import Action, Context, Step, policy_spec_mcp_tool
+from pocket_joe import Action, Context, Message, policy_spec_mcp_tool
 from openai import AsyncOpenAI 
 
 
-def ledger_to_llm_messages(ledger: list[Step]) -> list[dict[str, Any]]:
+def ledger_to_llm_messages(ledger: list[Message]) -> list[dict[str, Any]]:
     messages = []
     for step in ledger:
         if step.type == "text":
@@ -45,12 +45,12 @@ def actions_to_tools(actions: set[str], ctx: Context) -> list[dict]:
             })
     return tools
 
-def map_response_to_steps(response: Any) -> list[Step]:
+def map_response_to_steps(response: Any) -> list[Message]:
     new_steps = []
     msg = response.choices[0].message
     
     if msg.content:
-        new_steps.append(Step(
+        new_steps.append(Message(
             id=str(uuid.uuid4()),
             actor="assistant",
             type="text",
@@ -59,7 +59,7 @@ def map_response_to_steps(response: Any) -> list[Step]:
         
     if msg.tool_calls:
         for tc in msg.tool_calls:
-            new_steps.append(Step(
+            new_steps.append(Message(
                 id=str(uuid.uuid4()),
                 actor="assistant",
                 type="action_call",
@@ -74,7 +74,7 @@ def map_response_to_steps(response: Any) -> list[Step]:
 @policy_spec_mcp_tool(
     description="Calls OpenAI GPT-4 with tool support",
 )
-async def openai_llm_policy_v1(action: Action, ctx: Context) -> list[Step]:
+async def openai_llm_policy_v1(action: Action, ctx: Context) -> list[Message]:
 
 
     # 1. Map Ledger to LLM Messages

@@ -1,7 +1,7 @@
 from contextvars import Context
 from ddgs import DDGS
 
-from pocket_joe import Action, Step
+from pocket_joe import Action, Message
 from pocket_joe import policy_spec_mcp_tool
 
 @policy_spec_mcp_tool(
@@ -9,7 +9,7 @@ from pocket_joe import policy_spec_mcp_tool
 )
 
 @policy_spec_mcp_tool(description="Performs web search")
-async def search_web_duckduckgo_policy(action: Action, ctx: Context, query: str) -> list[Step]:
+async def search_web_duckduckgo_policy(action: Action, ctx: Context, query: str) -> list[Message]:
     """
     Performs a web search and returns results.
     
@@ -21,7 +21,7 @@ async def search_web_duckduckgo_policy(action: Action, ctx: Context, query: str)
     results_str = "\n\n".join([f"Title: {r['title']}\nURL: {r['href']}\nSnippet: {r['body']}" for r in results])
     
     return [
-        Step(
+        Message(
             id="",  # Engine sets this
             actor=action.policy,
             type="action_result",

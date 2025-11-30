@@ -1,7 +1,7 @@
 """Tests for policy_spec_mcp decorators and parameter unpacking."""
 import asyncio
 import pytest
-from pocket_joe.core import Action, Context, Step
+from pocket_joe.core import Action, Context, Message
 from pocket_joe.policy_spec_mcp import policy_spec, policy_spec_mcp_tool, policy_spec_mcp_resource
 from pocket_joe.registry import Registry
 from pocket_joe.memory_runtime import InMemoryRunner
@@ -12,8 +12,8 @@ async def test_tool_with_required_parameters():
     """Test tool policy with required parameters gets them unpacked correctly."""
     
     @policy_spec_mcp_tool(description='Search tool')
-    async def search_tool(action: Action, ctx: Context, query: str, limit: int = 10) -> list[Step]:
-        return [Step(
+    async def search_tool(action: Action, ctx: Context, query: str, limit: int = 10) -> list[Message]:
+        return [Message(
             actor='search_tool',
             type='action_result',
             payload={'results': f'Found results for: {query} (limit={limit})'}
@@ -23,7 +23,7 @@ async def test_tool_with_required_parameters():
     runner = InMemoryRunner(registry)
     
     # Simulate an action_call step from LLM
-    action_call_step = Step(
+    action_call_step = Message(
         actor='assistant',
         type='action_call',
         payload={
@@ -51,8 +51,8 @@ async def test_tool_with_default_parameters():
     """Test tool policy with default parameters works when not provided."""
     
     @policy_spec_mcp_tool(description='Search tool')
-    async def search_tool(action: Action, ctx: Context, query: str, limit: int = 10) -> list[Step]:
-        return [Step(
+    async def search_tool(action: Action, ctx: Context, query: str, limit: int = 10) -> list[Message]:
+        return [Message(
             actor='search_tool',
             type='action_result',
             payload={'results': f'Found results for: {query} (limit={limit})'}
@@ -62,7 +62,7 @@ async def test_tool_with_default_parameters():
     runner = InMemoryRunner(registry)
     
     # Only provide required param
-    action_call_step = Step(
+    action_call_step = Message(
         actor='assistant',
         type='action_call',
         payload={
@@ -87,8 +87,8 @@ async def test_missing_required_parameter_raises_error():
     """Test that missing required parameters raise validation error."""
     
     @policy_spec_mcp_tool(description='Search tool')
-    async def search_tool(action: Action, ctx: Context, query: str) -> list[Step]:
-        return [Step(
+    async def search_tool(action: Action, ctx: Context, query: str) -> list[Message]:
+        return [Message(
             actor='search_tool',
             type='action_result',
             payload={'results': f'Found: {query}'}
@@ -98,7 +98,7 @@ async def test_missing_required_parameter_raises_error():
     runner = InMemoryRunner(registry)
     
     # Missing required 'query' param
-    action_call_step = Step(
+    action_call_step = Message(
         actor='assistant',
         type='action_call',
         payload={
@@ -121,10 +121,10 @@ async def test_llm_policy_with_no_extra_params():
     """Test LLM policy with no extra params (uses ctx.get_ledger() and action.actions)."""
     
     @policy_spec_mcp_tool(description='LLM policy')
-    async def llm_policy(action: Action, ctx: Context) -> list[Step]:
+    async def llm_policy(action: Action, ctx: Context) -> list[Message]:
         ledger = ctx.get_ledger()
         tools = action.actions
-        return [Step(
+        return [Message(
             actor='assistant',
             type='text',
             payload={'content': f'Processed {len(ledger)} steps with {len(tools)} tools'}
@@ -134,7 +134,7 @@ async def test_llm_policy_with_no_extra_params():
     runner = InMemoryRunner(registry)
     
     # LLM doesn't use action_call format, just regular invocation
-    user_step = Step(
+    user_step = Message(
         actor='user',
         type='text',
         payload={'content': 'Hello'}
@@ -159,15 +159,15 @@ async def test_registry_mcp_kind_filtering():
     """Test registry correctly filters policies by MCP kind."""
     
     @policy_spec_mcp_tool(description='A tool')
-    async def tool1(action: Action, ctx: Context) -> list[Step]:
+    async def tool1(action: Action, ctx: Context) -> list[Message]:
         return []
 
     @policy_spec_mcp_resource(description='A resource')
-    async def resource1(action: Action, ctx: Context) -> list[Step]:
+    async def resource1(action: Action, ctx: Context) -> list[Message]:
         return []
 
     @policy_spec(mcp_kind='none_mcp', description='Internal only')
-    async def internal1(action: Action, ctx: Context) -> list[Step]:
+    async def internal1(action: Action, ctx: Context) -> list[Message]:
         return []
 
     registry = Registry(tool1, resource1, internal1)

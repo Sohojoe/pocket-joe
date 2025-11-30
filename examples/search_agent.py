@@ -1,7 +1,7 @@
 import asyncio
 # from pocket_joe import Action, Step, Registry, Context, InMemoryRunner, loop_wrapper, invoke_action, policy_spec
 from pocket_joe import (
-    Action, Step, 
+    Action, Message, 
     policy_spec_mcp_resource, policy_spec_mcp_tool,
     Registry, Context, 
     InMemoryRunner, 
@@ -14,14 +14,14 @@ from examples.utils import openai_llm_policy_v1, search_web_duckduckgo_policy
 # --- Tools ---
 
 @policy_spec_mcp_tool(description="Orchestrator with LLM and search")
-async def search_agent(action: Action, ctx: Context) -> list[Step]:
+async def search_agent(action: Action, ctx: Context) -> list[Message]:
     """
     Orchestrator that gives the LLM access to web search.
     """
     # Build sub-action for LLM
     # payload['ledger'] = ctx.get_ledger()  # Pass conversation history to LLM
     # payload = [{"role": "system", "content": "You are an AI assistant that can use tools to help answer user questions."}]
-    system_step = Step(
+    system_step = Message(
         actor="system",
         type="text",
         payload={"content": "You are an AI assistant that can use tools to help answer user questions."}
@@ -58,7 +58,7 @@ async def main():
     
     # Initial Action: User asks a question
     # We must define allowed edges (tools) for security/validity
-    first_step = Step(
+    first_step = Message(
         actor="user",
         type="text",
         payload={"content": "What is the latest Python version?"}
@@ -69,7 +69,7 @@ async def main():
     )
     
     result = await runner.execute(initial_action)
-    print(f"\nFinal Result: {result[0].payload['content']}")
+    print(f"\nFinal Result: {result[-1].payload['content']}")
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -1,17 +1,17 @@
 from typing import Any, List, Callable
-from pocket_joe.core import Action, Context, Step
+from pocket_joe.core import Action, Context, Message
 from pocket_joe.registry import Registry
 from pocket_joe.policy_spec_mcp import unpack_params
 
 class InMemoryContext(Context):
-    def __init__(self, runner: 'InMemoryRunner', ledger: list[Step]):
+    def __init__(self, runner: 'InMemoryRunner', ledger: list[Message]):
         self.runner = runner
         self.ledger = ledger
 
     async def call(self, action: Action, decorators: List[Callable] = []) -> Any:
         return await self.runner.execute(action, decorators)
     
-    def get_ledger(self) -> list[Step]:
+    def get_ledger(self) -> list[Message]:
         return self.ledger
     
     def get_registry(self) -> Registry:

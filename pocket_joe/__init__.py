@@ -1,4 +1,4 @@
-from .core import Action, Policy, Context, Step
+from .core import Action, Policy, Context, Message
 from .policy_spec_mcp import policy_spec, policy_spec_mcp_tool, policy_spec_mcp_resource, unpack_params
 from .registry import Registry
 from .memory_runtime import InMemoryRunner
@@ -11,7 +11,7 @@ __all__ = [
     "Action",
     "Policy",
     "Context",
-    "Step",
+    "Message",
     "Registry",
     "policy_spec",
     "policy_spec_mcp_tool",

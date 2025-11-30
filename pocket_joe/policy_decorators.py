@@ -1,6 +1,6 @@
 import asyncio
 from typing import Callable, Any
-from pocket_joe.core import Action, Context, Step, Policy
+from pocket_joe.core import Action, Context, Message, Policy
 
 
 def invoke_action_wrapper() -> Callable[[Policy], Policy]:
@@ -16,7 +16,7 @@ def invoke_action_wrapper() -> Callable[[Policy], Policy]:
     Exceptions from substeps will propagate up the stack.
     """
     def decorator(policy_func: Policy) -> Policy:
-        async def wrapper(action: Action, ctx: Context, **kwargs: Any) -> list[Step]:
+        async def wrapper(action: Action, ctx: Context, **kwargs: Any) -> list[Message]:
             # Execute the wrapped policy
             steps = await policy_func(action, ctx, **kwargs)
             
@@ -30,7 +30,7 @@ def invoke_action_wrapper() -> Callable[[Policy], Policy]:
                 return steps
             
             # Execute all action_calls in parallel
-            async def execute_substep(step: Step) -> list[Step]:
+            async def execute_substep(step: Message) -> list[Message]:
                 """Execute a single action_call step."""
                 payload_dict = step.payload
                 policy_name = payload_dict.get("policy")
