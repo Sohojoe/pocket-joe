@@ -37,13 +37,13 @@ class InMemoryRunner:
             
         ctx = InMemoryContext(self, action.payload)
         
-        # Unpack parameters from the last step in action.payload if it's an action_call
-        # Convention: action_call steps have payload = {"policy": "...", "payload": {...params}}
+        # Unpack parameters from the last message in action.payload if it's an action_call
+        # Convention: action_call messages have payload = {"policy": "...", "payload": {...params}}
         params: dict[str, Any] = {}
         if action.payload:
-            last_step = action.payload[-1]
-            if last_step.type == "action_call" and isinstance(last_step.payload, dict):
-                tool_params = last_step.payload.get("payload", {})
+            last_message = action.payload[-1]
+            if last_message.type == "action_call" and isinstance(last_message.payload, dict):
+                tool_params = last_message.payload.get("payload", {})
                 if isinstance(tool_params, dict):
                     params = unpack_params(policy_meta, tool_params)
         

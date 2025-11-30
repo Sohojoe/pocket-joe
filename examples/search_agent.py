@@ -1,5 +1,5 @@
 import asyncio
-# from pocket_joe import Action, Step, Registry, Context, InMemoryRunner, loop_wrapper, invoke_action, policy_spec
+# from pocket_joe import Action, Message, Registry, Context, InMemoryRunner, loop_wrapper, invoke_action, policy_spec
 from pocket_joe import (
     Action, Message, 
     policy_spec_mcp_resource, policy_spec_mcp_tool,
@@ -21,12 +21,12 @@ async def search_agent(action: Action, ctx: Context) -> list[Message]:
     # Build sub-action for LLM
     # payload['ledger'] = ctx.get_ledger()  # Pass conversation history to LLM
     # payload = [{"role": "system", "content": "You are an AI assistant that can use tools to help answer user questions."}]
-    system_step = Message(
+    system_message = Message(
         actor="system",
         type="text",
         payload={"content": "You are an AI assistant that can use tools to help answer user questions."}
     )
-    payload = [system_step] + action.payload
+    payload = [system_message] + action.payload
 
     llm_action = Action(
         policy="llm_policy",
@@ -35,13 +35,13 @@ async def search_agent(action: Action, ctx: Context) -> list[Message]:
     )
     
     # Call LLM with decorators: loop until done, auto-execute tool calls
-    steps = await ctx.call(
+    selected_actions = await ctx.call(
         action=llm_action,
         decorators=[invoke_action_wrapper()]
         # decorators=[loop_wrapper(max_turns=5), invoke_action_wrapper()]
     )
 
-    return steps
+    return selected_actions
 
 
 # --- Main Execution ---
@@ -58,18 +58,19 @@ async def main():
     
     # Initial Action: User asks a question
     # We must define allowed edges (tools) for security/validity
-    first_step = Message(
+    user_request = Message(
         actor="user",
         type="text",
         payload={"content": "What is the latest Python version?"}
     )
     initial_action = Action(
         policy="search_agent",
-        payload= [first_step],
+        payload= [user_request],
     )
     
     result = await runner.execute(initial_action)
     print(f"\nFinal Result: {result[-1].payload['content']}")
+    print("--- Demo Complete ---")
 
 if __name__ == "__main__":
     asyncio.run(main())

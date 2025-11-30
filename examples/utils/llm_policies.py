@@ -15,17 +15,17 @@ from openai import AsyncOpenAI
 
 def ledger_to_llm_messages(ledger: list[Message]) -> list[dict[str, Any]]:
     messages = []
-    for step in ledger:
-        if step.type == "text":
-            messages.append({"role": step.actor, "content": step.payload["content"]})
-        elif step.type == "action_result":
+    for msg in ledger:
+        if msg.type == "text":
+            messages.append({"role": msg.actor, "content": msg.payload["content"]})
+        elif msg.type == "action_result":
             # Tool messages require tool_call_id
             messages.append({
                 "role": "tool",
-                "tool_call_id": step.id,
-                "content": str(step.payload)
+                "tool_call_id": msg.id,
+                "content": str(msg.payload)
             })
-        # Note: We ignore "action_call" steps as the LLM implies them via its previous output
+        # Note: We ignore "action_call" messages as the LLM implies them via its previous output
     return messages
 
 def actions_to_tools(actions: set[str], ctx: Context) -> list[dict]:
@@ -45,12 +45,12 @@ def actions_to_tools(actions: set[str], ctx: Context) -> list[dict]:
             })
     return tools
 
-def map_response_to_steps(response: Any) -> list[Message]:
-    new_steps = []
+def map_response_to_messagess(response: Any) -> list[Message]:
+    new_messages = []
     msg = response.choices[0].message
     
     if msg.content:
-        new_steps.append(Message(
+        new_messages.append(Message(
             id=str(uuid.uuid4()),
             actor="assistant",
             type="text",
@@ -59,7 +59,7 @@ def map_response_to_steps(response: Any) -> list[Message]:
         
     if msg.tool_calls:
         for tc in msg.tool_calls:
-            new_steps.append(Message(
+            new_messages.append(Message(
                 id=str(uuid.uuid4()),
                 actor="assistant",
                 type="action_call",
@@ -69,7 +69,7 @@ def map_response_to_steps(response: Any) -> list[Message]:
                 }
             ))
             
-    return new_steps
+    return new_messages
 
 @policy_spec_mcp_tool(
     description="Calls OpenAI GPT-4 with tool support",
@@ -91,7 +91,7 @@ async def openai_llm_policy_v1(action: Action, ctx: Context) -> list[Message]:
         tools=tools  # type: ignore
     )
     
-    # 4. Map Response to Steps
-    new_steps = map_response_to_steps(response)
+    # 4. Map Response to Messages
+    new_messages = map_response_to_messagess(response)
             
-    return new_steps
+    return new_messages

@@ -27,5 +27,5 @@ class Context(Protocol):
     # def get_config(self, key: str, default: Any = None) -> Any: ...
 
 # A Policy is an async function that takes an Action and a Context,
-# and returns a list of Steps (the record of what it did).
+# and returns a list of Messages (the record of what it did).
 Policy = Callable[[Action, Context], Awaitable[list[Message]]]

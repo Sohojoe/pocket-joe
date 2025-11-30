@@ -312,8 +312,9 @@ async def llm_policy(
 
 ## ToDo
 
-[] We rename Step as Message
+[x] We rename Step as Message
 [] We loose Action
 [] Revised Policy defenition
 [] manage history explicitly
 [] Context is the registry
+[] platform calls the options
