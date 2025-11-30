@@ -91,7 +91,7 @@ async def call_options_in_parallel(ctx: BaseContext, messages: List[Message]) ->
         
         func = getattr(ctx, policy_name)
         selected_actions = await func(**args)
-        final_actions = list[Message]()
+        final_actions: list[Message] = []
         for msg in selected_actions:
             if not isinstance(msg, Message):
                 raise TypeError(
@@ -107,10 +107,16 @@ async def call_options_in_parallel(ctx: BaseContext, messages: List[Message]) ->
 
         return final_actions
 
-    # Find all action_call messages
+    # Find all uncompleted action_call messages
+    completed_ids = {
+        msg.tool_id for msg in messages
+        if msg.type == "action_result"
+    }
+
     options = [
         msg for msg in messages 
-        if msg.type == "action_call" and isinstance(msg.payload, dict)
+        if msg.type == "action_call" 
+        and msg.tool_id not in completed_ids
     ]
     
     if not options:
