@@ -1,48 +1,97 @@
 import asyncio
 # from pocket_joe import Action, Message, Registry, Context, InMemoryRunner, loop_wrapper, invoke_action, policy_spec
 from pocket_joe import (
-    Action, Message, 
+    Message, 
     policy_spec_mcp_resource, policy_spec_mcp_tool,
-    Registry, Context, 
+    BaseContext, 
     InMemoryRunner, 
+    Policy,
     # loop_wrapper, invoke_action,
     invoke_action_wrapper,
     )
 from dataclasses import replace
-from examples.utils import openai_llm_policy_v1, search_web_duckduckgo_policy
+from examples.utils import OpenAILLMPolicy_v1, WebSeatchDdgsPolicy
 
 # --- Tools ---
+@policy_spec_mcp_tool(description="Return final result to user")
+class ReturnResult(Policy):
+    ctx: "AppContext" # ocerride to specify context type
+    async def __call__(
+        self,
+        result: str 
+    ) -> list[Message]:
+        """
+        Return final result to user.
+        :param result: final result string to return
+        """
+        # Build sub-action for LLM
+        # payload['ledger'] = ctx.get_ledger()  # Pass conversation history to LLM
+        # payload = [{"role": "system", "content": "You are an AI assistant that can use tools to help answer user questions."}]
+        result_message = Message(
+            actor=self.__class__.__name__,
+            type="text",
+            payload={"content": result}
+        )
+        return [result_message]
 
 @policy_spec_mcp_tool(description="Orchestrator with LLM and search")
-async def search_agent(action: Action, ctx: Context) -> list[Message]:
-    """
-    Orchestrator that gives the LLM access to web search.
-    """
-    # Build sub-action for LLM
-    # payload['ledger'] = ctx.get_ledger()  # Pass conversation history to LLM
-    # payload = [{"role": "system", "content": "You are an AI assistant that can use tools to help answer user questions."}]
-    system_message = Message(
-        actor="system",
-        type="text",
-        payload={"content": "You are an AI assistant that can use tools to help answer user questions."}
-    )
-    payload = [system_message] + action.payload
+class SearchAgent(Policy):
+    ctx: "AppContext" # ocerride to specify context type
+    async def __call__(
+        self,
+        prompt: str,
+        max_iterations: int = 3,
+    ) -> list[Message]:
+        """
+        Orchestrator that gives the LLM access to web search.
+        :param prompt: The user prompt to process
+        :param max_iterations: Maximum number of iterations to run
+        """
+        # Build sub-action for LLM
+        # payload['ledger'] = ctx.get_ledger()  # Pass conversation history to LLM
+        # payload = [{"role": "system", "content": "You are an AI assistant that can use tools to help answer user questions."}]
+        system_message = Message(
+            actor="system",
+            type="text",
+            payload={"content": "You are an AI assistant that can use tools to help answer user questions."}
+        )
+        prompt_message = Message(
+            actor="user",
+            type="text",
+            payload={"content": prompt}
+        )
 
-    llm_action = Action(
-        policy="llm_policy",
-        payload=payload,
-        actions=action.actions | {"search_web_policy"},
-    )
+        history = [system_message, prompt_message]
+
+        iteration = 0
+        while iteration < max_iterations:
+            iteration += 1
+            print(f"\n--- Search Agent Iteration {iteration} ---")
+            selected_actions = await self.ctx.llm(observations=history, options=["web_search", "return_result"])
+            history.extend(selected_actions)
+            # Check if ReturnResult was called
+            if any(msg for msg in selected_actions if msg.actor == "ReturnResult"):
+                print("ReturnResult called, ending search agent.")
+                break
     
-    # Call LLM with decorators: loop until done, auto-execute tool calls
-    selected_actions = await ctx.call(
-        action=llm_action,
-        decorators=[invoke_action_wrapper()]
-        # decorators=[loop_wrapper(max_turns=5), invoke_action_wrapper()]
-    )
+        return history
 
-    return selected_actions
+# --- App Context ---
+class AppContext(BaseContext):
+    llm: OpenAILLMPolicy_v1
+    web_search: WebSeatchDdgsPolicy
+    search_agent: SearchAgent
+    return_result: ReturnResult
 
+    def __init__(self, runner):
+        super().__init__(runner)
+        # self.llm = self._bind(OpenAILLMPolicy_v1)
+        # self.web_search = self._bind(WebSeatchDdgsPolicy)
+        # self.search_agent = self._bind(SearchAgent)
+        self.llm = self._bind(OpenAILLMPolicy_v1)
+        self.web_search = self._bind(WebSeatchDdgsPolicy)
+        self.search_agent = self._bind(SearchAgent)
+        self.return_result = self._bind(ReturnResult)
 
 # --- Main Execution ---
 
@@ -50,25 +99,14 @@ async def main():
     print("--- Starting Search Agent Demo ---")
     
     # Initialize Registry with all policies
-    registry = Registry(search_agent)
-    registry.register_policy(openai_llm_policy_v1, alias="llm_policy")
-    registry.register_policy(search_web_duckduckgo_policy, alias="search_web_policy")
+    # registry = Registry(search_agent)
+    # registry.register_policy(openai_llm_policy_v1, alias="llm_policy")
+    # registry.register_policy(search_web_duckduckgo_policy, alias="search_web_policy")
     
-    runner = InMemoryRunner(registry)
+    runner = InMemoryRunner()
+    ctx = AppContext(runner)
+    result = await ctx.search_agent(prompt="What is the latest Python version?")
     
-    # Initial Action: User asks a question
-    # We must define allowed edges (tools) for security/validity
-    user_request = Message(
-        actor="user",
-        type="text",
-        payload={"content": "What is the latest Python version?"}
-    )
-    initial_action = Action(
-        policy="search_agent",
-        payload= [user_request],
-    )
-    
-    result = await runner.execute(initial_action)
     print(f"\nFinal Result: {result[-1].payload['content']}")
     print("--- Demo Complete ---")
 

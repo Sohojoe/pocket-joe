@@ -1,6 +1,6 @@
 import asyncio
 from typing import Callable, Any
-from pocket_joe.core import Action, Context, Message, Policy
+from pocket_joe.core import Message, Policy
 
 
 def invoke_action_wrapper() -> Callable[[Policy], Policy]:

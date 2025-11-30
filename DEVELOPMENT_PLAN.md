@@ -313,8 +313,11 @@ async def llm_policy(
 ## ToDo
 
 [x] We rename Step as Message
-[] We loose Action
-[] Revised Policy defenition
-[] manage history explicitly
-[] Context is the registry
-[] platform calls the options
+[x] We loose Action
+[x] Revised Policy defenition
+[x] manage history explicitly
+[x] Context is the registry
+[x] platform calls the options
+[] rename action_call/action_result to be option_xx
+[] try without done command
+[] implement more agents
