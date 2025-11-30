@@ -7,7 +7,6 @@ from pocket_joe import (
     InMemoryRunner, 
     Policy,
     # loop_wrapper, invoke_action,
-    invoke_action_wrapper,
     )
 from dataclasses import replace
 from examples.utils import OpenAILLMPolicy_v1, WebSeatchDdgsPolicy

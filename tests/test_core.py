@@ -4,7 +4,7 @@ from dataclasses import replace
 from pocket_joe.core import Action, Context
 from pocket_joe.registry import Registry
 from pocket_joe.memory_runtime import InMemoryRunner
-from pocket_joe.policy_decorators import loop_wrapper, invoke_action
+from pocket_joe.policy_wrappers import loop_wrapper, invoke_action
 
 class TestPocketJoeCore(unittest.IsolatedAsyncioTestCase):
     

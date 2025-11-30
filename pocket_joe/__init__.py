@@ -6,7 +6,7 @@ from .policy_spec_mcp import (
     )
 # from .registry import Registry
 from .memory_runtime import InMemoryRunner
-from .policy_decorators import invoke_action_wrapper
+from .policy_wrappers import invoke_options_wrapper
 # from .policy_decorators import loop_wrapper, invoke_action
 # from .memory_runtime import InMemoryRunner
 # from .durable_runtime import DurableRunner, SuspendExecution
@@ -20,5 +20,5 @@ __all__ = [
     "policy_spec_mcp_resource",
     "get_policy_spec",
     "InMemoryRunner",
-    "invoke_action_wrapper",
+    "invoke_options_wrapper",
 ]

@@ -319,6 +319,7 @@ async def llm_policy(
 [x] Context is the registry
 [x] platform calls the options
 [] rename action_call/action_result to be option_xx
-[] try without done command
-[] implement more agents
+[x] try without done command
 [x] fix AppContext type issue
+[x] move invoke options to decerators/wappers
+[] implement more agents
