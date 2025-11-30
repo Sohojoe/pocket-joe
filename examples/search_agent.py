@@ -78,10 +78,6 @@ class SearchAgent(Policy):
 
 # --- App Context ---
 class AppContext(BaseContext):
-    llm: OpenAILLMPolicy_v1
-    web_search: WebSeatchDdgsPolicy
-    search_agent: SearchAgent
-    return_result: ReturnResult
 
     def __init__(self, runner):
         super().__init__(runner)

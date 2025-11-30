@@ -38,9 +38,9 @@ class BaseContext:
     def __init__(self, runner):
         self._runner = runner
 
-    def _bind[T: type[Policy]](self, policy: T) -> T:
+    def _bind[T: Policy](self, policy: type[T]) -> T:
         """Bind a policy to this context using runner's strategy.
-        Returns the same type as passed in for proper type inference."""
+        Returns an instance of the policy type for proper type inference."""
         bound = self._runner._bind_strategy(policy, self)
         # Store reference to original policy class on the bound function
         bound.__policy_class__ = policy  # type: ignore
