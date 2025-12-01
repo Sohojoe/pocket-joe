@@ -10,7 +10,12 @@ from .search_web_policies import (
     WebSeatchDdgsPolicy,
 )
 
+from .transcribe_youtube_policy import (
+    TranscribeYouTubePolicy,
+)
+
 __all__ = [
     "OpenAILLMPolicy_v1",
     "WebSeatchDdgsPolicy",
+    "TranscribeYouTubePolicy",
 ]

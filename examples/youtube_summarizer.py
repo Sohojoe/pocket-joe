@@ -1,11 +1,7 @@
 """port of https://github.com/The-Pocket/PocketFlow-Tutorial-Youtube-Made-Simple"""
 
 import asyncio
-import re
 import yaml
-import requests
-from bs4 import BeautifulSoup
-from youtube_transcript_api import YouTubeTranscriptApi
 from pocket_joe import (
     Message, 
     policy_spec_mcp_tool,
@@ -13,46 +9,7 @@ from pocket_joe import (
     InMemoryRunner, 
     Policy,
 )
-from examples.utils import OpenAILLMPolicy_v1
-
-
-# --- Helper Functions ---
-def extract_video_id(url: str) -> str | None:
-    """Extract YouTube video ID from URL"""
-    pattern = r'(?:v=|\/)([0-9A-Za-z_-]{11})'
-    match = re.search(pattern, url)
-    return match.group(1) if match else None
-
-
-def get_video_info(url: str) -> dict:
-    """Get video title, transcript and thumbnail"""
-    video_id = extract_video_id(url)
-    if not video_id:
-        return {"error": "Invalid YouTube URL"}
-    
-    try:
-        # Get title using BeautifulSoup
-        response = requests.get(url)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        title_tag = soup.find('title')
-        title = title_tag.text.replace(" - YouTube", "") if title_tag else "Unknown Title"
-        
-        # Get thumbnail
-        thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
-        
-        # Get transcript
-        ytt_api = YouTubeTranscriptApi()
-        fetched_transcript = ytt_api.fetch(video_id)
-        transcript = " ".join([snippet.text for snippet in fetched_transcript])
-        
-        return {
-            "title": title,
-            "transcript": transcript,
-            "thumbnail_url": thumbnail_url,
-            "video_id": video_id
-        }
-    except Exception as e:
-        return {"error": str(e)}
+from examples.utils import OpenAILLMPolicy_v1, TranscribeYouTubePolicy
 
 
 # --- Policies ---
@@ -228,7 +185,9 @@ class YouTubeSummarizer(Policy):
         print(f"\n--- Processing YouTube URL: {url} ---")
         
         # Step 1: Get video info
-        video_info = get_video_info(url)
+        result = await self.ctx.transcribe_youtube(url=url)
+        video_info = result[0].payload
+        
         if "error" in video_info:
             return [Message(
                 actor="youtube_summarizer",
@@ -317,6 +276,7 @@ class AppContext(BaseContext):
     def __init__(self, runner):
         super().__init__(runner)
         self.llm = self._bind(OpenAILLMPolicy_v1)
+        self.transcribe_youtube = self._bind(TranscribeYouTubePolicy)
         self.extract_topics = self._bind(ExtractTopicsPolicy)
         self.process_topic = self._bind(ProcessTopicPolicy)
         self.youtube_summarizer = self._bind(YouTubeSummarizer)

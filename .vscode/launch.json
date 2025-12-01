@@ -22,6 +22,16 @@
             }
         },
         {
+            "name": "Debug Transcribe YouTube Demo",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/transcribe_youtube_demo.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
             "name": "Debug Unit Tests",
             "type": "python",
             "request": "launch",
