@@ -1,93 +1,161 @@
-import unittest
-import asyncio
+"""Tests for pocket_joe.core module."""
+
+import pytest
 from dataclasses import replace
-from pocket_joe.core import Action, Context
-from pocket_joe.registry import Registry
-from pocket_joe.memory_runtime import InMemoryRunner
-from pocket_joe.policy_wrappers import loop_wrapper, invoke_action
+from pocket_joe.core import Message, Policy, BaseContext
 
-class TestPocketJoeCore(unittest.IsolatedAsyncioTestCase):
+
+class TestMessage:
+    """Test Message dataclass."""
     
-    def setUp(self):
-        # Reset registry for each test
-        self.registry = Registry()
-        self.runner = InMemoryRunner(registry=self.registry)
-
-    async def test_action_immutability(self):
-        """Test that Action is immutable and replace works as expected."""
-        a1 = Action(payload="initial")
+    def test_message_creation(self):
+        """Test basic Message creation."""
+        msg = Message(
+            actor="user",
+            type="text",
+            payload={"content": "hello"}
+        )
         
-        # Verify immutability
-        with self.assertRaises(Exception):
-            a1.payload = "changed"
-            
-        # Verify replace
-        a2 = replace(a1, payload="updated")
-        self.assertEqual(a1.payload, "initial")
-        self.assertEqual(a2.payload, "updated")
-        # replace() keeps the original ID unless specified, which is correct for updating state of same logical action
-        self.assertEqual(a1.id, a2.id)
-
-    async def test_simple_policy_execution(self):
-        """Test registering and running a simple policy."""
+        assert msg.actor == "user"
+        assert msg.type == "text"
+        assert msg.payload == {"content": "hello"}
+        assert msg.tool_id is None
+        assert msg.id == ""
+    
+    def test_message_with_tool_id(self):
+        """Test Message with tool_id."""
+        msg = Message(
+            actor="assistant",
+            type="action_call",
+            payload={"function": "get_weather"},
+            tool_id="tool_123"
+        )
         
-        @self.registry.register_policy("echo")
-        async def echo_policy(action: Action, ctx: Context):
-            return f"Echo: {action.payload}"
-            
-        result = await self.runner.execute("echo", Action(payload="Hello"))
-        self.assertEqual(result, "Echo: Hello")
-
-    async def test_nested_policy_call(self):
-        """Test a policy calling another policy via Context."""
+        assert msg.tool_id == "tool_123"
+    
+    def test_message_immutability(self):
+        """Test that Message is immutable (frozen)."""
+        msg = Message(actor="user", type="text", payload={"content": "test"})
         
-        @self.registry.register_policy("worker")
-        async def worker(action: Action, ctx: Context):
-            return action.payload * 2
-            
-        @self.registry.register_policy("manager")
-        async def manager(action: Action, ctx: Context):
-            # Call worker
-            res = await ctx.call("worker", Action(payload=10))
-            return f"Worker said: {res}"
-            
-        result = await self.runner.execute("manager", Action(payload="start"))
-        self.assertEqual(result, "Worker said: 20")
-
-    async def test_decorators_loop_and_invoke(self):
-        """Test the loop_wrapper and invoke_action decorators."""
+        with pytest.raises(Exception):  # FrozenInstanceError
+            msg.actor = "assistant"
+    
+    def test_message_replace(self):
+        """Test that replace() works for creating modified copies."""
+        msg1 = Message(actor="user", type="text", payload={"content": "hello"})
+        msg2 = replace(msg1, payload={"content": "goodbye"})
         
-        # 1. Define a tool
-        @self.registry.register_policy("tool")
-        async def tool(action: Action, ctx: Context):
-            return "ToolResult"
-            
-        # 2. Define a decider that uses the tool then finishes
-        @self.registry.register_policy("decider")
-        async def decider(action: Action, ctx: Context):
-            if not action.history:
-                return {"tool_call": "tool", "tool_args": "arg"}
-            else:
-                # Check history
-                last_msg = action.history[-1]
-                if last_msg["role"] == "tool" and last_msg["content"] == "ToolResult":
-                    return {"done": True, "value": "Success"}
-                return {"done": True, "value": "Fail"}
+        assert msg1.payload == {"content": "hello"}
+        assert msg2.payload == {"content": "goodbye"}
+        assert msg1.actor == msg2.actor
+        assert msg1.type == msg2.type
 
-        # 3. Define the agent that wires them up
-        @self.registry.register_policy("agent")
-        async def agent(action: Action, ctx: Context):
-            # Allow the tool
-            scoped_action = replace(action, edges=("tool",))
-            
-            return await ctx.call(
-                "decider", 
-                scoped_action, 
-                decorators=[loop_wrapper(max_turns=5), invoke_action()]
-            )
 
-        result = await self.runner.execute("agent", Action(payload="start"))
-        self.assertEqual(result, "Success")
+class TestPolicy:
+    """Test Policy base class."""
+    
+    def test_policy_requires_context(self):
+        """Test that Policy requires a context."""
+        # Create a mock context
+        class MockRunner:
+            pass
+        
+        ctx = BaseContext(MockRunner())
+        
+        # Policy can be instantiated with context
+        policy = Policy(ctx)
+        assert policy.ctx is ctx
+    
+    @pytest.mark.asyncio
+    async def test_policy_call_not_implemented(self):
+        """Test that base Policy.__call__ raises NotImplementedError."""
+        class MockRunner:
+            pass
+        
+        ctx = BaseContext(MockRunner())
+        policy = Policy(ctx)
+        
+        with pytest.raises(NotImplementedError):
+            await policy()
 
-if __name__ == "__main__":
-    unittest.main()
+
+class TestBaseContext:
+    """Test BaseContext class."""
+    
+    def test_context_creation(self):
+        """Test BaseContext creation with runner."""
+        class MockRunner:
+            pass
+        
+        runner = MockRunner()
+        ctx = BaseContext(runner)
+        
+        assert ctx._runner is runner
+    
+    def test_bind_policy(self):
+        """Test _bind method delegates to runner's strategy."""
+        class MockPolicy(Policy):
+            async def __call__(self):
+                return [Message(actor="test", type="test", payload={})]
+        
+        class MockRunner:
+            def _bind_strategy(self, policy_class, context):
+                # Return a bound instance
+                instance = policy_class(context)
+                return instance
+        
+        runner = MockRunner()
+        ctx = BaseContext(runner)
+        
+        bound = ctx._bind(MockPolicy)
+        assert isinstance(bound, MockPolicy)
+        assert bound.ctx is ctx
+        assert hasattr(bound, '__policy_class__')
+        assert bound.__policy_class__ is MockPolicy
+    
+    def test_get_policy_success(self):
+        """Test get_policy retrieves the policy class."""
+        class MockPolicy(Policy):
+            async def __call__(self):
+                return []
+        
+        class MockRunner:
+            def _bind_strategy(self, policy_class, context):
+                instance = policy_class(context)
+                return instance
+        
+        runner = MockRunner()
+        ctx = BaseContext(runner)
+        
+        # Bind and attach to context
+        bound = ctx._bind(MockPolicy)
+        ctx.test_policy = bound
+        
+        # Retrieve the policy class
+        policy_class = ctx.get_policy('test_policy')
+        assert policy_class is MockPolicy
+    
+    def test_get_policy_not_found(self):
+        """Test get_policy raises AttributeError if policy doesn't exist."""
+        class MockRunner:
+            pass
+        
+        runner = MockRunner()
+        ctx = BaseContext(runner)
+        
+        with pytest.raises(AttributeError):
+            ctx.get_policy('nonexistent')
+    
+    def test_get_policy_no_class_stored(self):
+        """Test get_policy raises ValueError if __policy_class__ not found."""
+        class MockRunner:
+            pass
+        
+        runner = MockRunner()
+        ctx = BaseContext(runner)
+        
+        # Manually attach something without __policy_class__
+        ctx.fake = lambda: None
+        
+        with pytest.raises(ValueError, match="Policy class not found"):
+            ctx.get_policy('fake')

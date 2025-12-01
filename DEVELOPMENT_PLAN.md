@@ -18,7 +18,7 @@ llm agents are just agents...
   - two messages for option call (tool/policy call)
     - the request
     - the result
-- In llm semantics, the caller always invokes all option call requests. there for we abstract that in the platform
+- In llm semantics, the caller always invokes all option call requests. therefor we abstract that in the platform
 
 #### putting this together we have these semantics
 
@@ -29,12 +29,13 @@ llm agents are just agents...
   - `policy` - the function that implements the policy
   - `observations` - the set of observations for the policy to reason over
   - `options` - a set of optional sub policies that the policy can choose
-  - `actions` - the set of concurrent actions the policy chose to take
+  - `selected_actions` - the set of concurrent actions the policy chose to take
 
 - policies mix llm, human, huristic... one interface
 - all policies have signature: `policy(ctx, observations, options, **kwargs)`
-  - `ctx`, `observations` and `options` always present
   - each policy defines additional parameters it needs
+  - use `observations: list[Message]` when you need to pass observations
+  - use `options: list[str]` when you need to pass options
   - enables evolution: human → heuristic → LLM with same interface
 
 #### formal RL definition
