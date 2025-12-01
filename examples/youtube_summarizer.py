@@ -1,71 +1,330 @@
 import asyncio
-from pocket_joe import Action, Registry, Context, InMemoryRunner, loop_wrapper, invoke_action
+import re
+import yaml
+import requests
+from bs4 import BeautifulSoup
+from youtube_transcript_api import YouTubeTranscriptApi
+from pocket_joe import (
+    Message, 
+    policy_spec_mcp_tool,
+    BaseContext, 
+    InMemoryRunner, 
+    Policy,
+)
+from examples.utils import OpenAILLMPolicy_v1
 
-registry = Registry()
 
-# --- Tools ---
+# --- Helper Functions ---
+def extract_video_id(url: str) -> str | None:
+    """Extract YouTube video ID from URL"""
+    pattern = r'(?:v=|\/)([0-9A-Za-z_-]{11})'
+    match = re.search(pattern, url)
+    return match.group(1) if match else None
 
-@registry.register("get_transcript")
-async def get_transcript(action: Action, context) -> str:
-    url = action.payload
-    print(f"  [Tool: get_transcript] Fetching transcript for: {url}")
-    await asyncio.sleep(0.5)
-    return "This is a mock transcript of the video. It talks about AI agents and PocketJoe..."
 
-@registry.register("summarize_text")
-async def summarize_text(action: Action, context) -> str:
-    text = action.payload
-    print(f"  [Tool: summarize_text] Summarizing text length: {len(text)}")
-    await asyncio.sleep(0.5)
-    return "Summary: The video explains how PocketJoe simplifies agent development using Policies and Actions."
-
-# --- Agent Policy ---
-
-@registry.register("youtube_agent")
-@loop_wrapper(max_turns=5)
-@invoke_action()
-async def youtube_agent(action: Action, context) -> dict:
-    history = action.history
-    url = action.payload # Initial payload is URL
+def get_video_info(url: str) -> dict:
+    """Get video title, transcript and thumbnail"""
+    video_id = extract_video_id(url)
+    if not video_id:
+        return {"error": "Invalid YouTube URL"}
     
-    # 1. Check if we have a summary
-    for item in history:
-        if item["role"] == "tool" and item["name"] == "summarize_text":
-            return {"done": True, "value": item["content"]}
-            
-    # 2. Check if we have a transcript
-    transcript = None
-    for item in history:
-        if item["role"] == "tool" and item["name"] == "get_transcript":
-            transcript = item["content"]
-            break
-            
-    if transcript:
-        print("  [Agent] I have the transcript. Now summarizing.")
+    try:
+        # Get title using BeautifulSoup
+        response = requests.get(url)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        title_tag = soup.find('title')
+        title = title_tag.text.replace(" - YouTube", "") if title_tag else "Unknown Title"
+        
+        # Get thumbnail
+        thumbnail_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+        
+        # Get transcript
+        ytt_api = YouTubeTranscriptApi()
+        fetched_transcript = ytt_api.fetch(video_id)
+        transcript = " ".join([snippet.text for snippet in fetched_transcript])
+        
         return {
-            "tool_call": "summarize_text",
-            "tool_args": transcript
+            "title": title,
+            "transcript": transcript,
+            "thumbnail_url": thumbnail_url,
+            "video_id": video_id
         }
-    else:
-        print("  [Agent] I need the transcript.")
-        return {
-            "tool_call": "get_transcript",
-            "tool_args": url
-        }
+    except Exception as e:
+        return {"error": str(e)}
 
-# --- Main ---
 
+# --- Policies ---
+@policy_spec_mcp_tool(description="Extract topics and questions from YouTube transcript")
+class ExtractTopicsPolicy(Policy):
+    ctx: "AppContext"
+    
+    async def __call__(
+        self,
+        title: str,
+        transcript: str,
+    ) -> list[Message]:
+        """
+        Extract interesting topics and generate questions from transcript.
+        :param title: Video title
+        :param transcript: Video transcript
+        """
+        prompt = f"""
+You are an expert content analyzer. Given a YouTube video transcript, identify at most 5 most interesting topics discussed and generate at most 3 most thought-provoking questions for each topic.
+
+VIDEO TITLE: {title}
+
+TRANSCRIPT:
+{transcript}
+
+Format your response in YAML:
+
+```yaml
+topics:
+  - title: |
+        First Topic Title
+    questions:
+      - |
+        Question 1 about first topic?
+      - |
+        Question 2 about first topic?
+  - title: |
+        Second Topic Title
+    questions:
+      - |
+        Question 1 about second topic?
+```
+"""
+        
+        system_message = Message(
+            actor="system",
+            type="text",
+            payload={"content": "You are a content analysis assistant."}
+        )
+        prompt_message = Message(
+            actor="user",
+            type="text",
+            payload={"content": prompt}
+        )
+        
+        history = [system_message, prompt_message]
+        response = await self.ctx.llm(observations=history, options=[])
+        
+        # Extract YAML from response
+        content = response[-1].payload.get("content", "")
+        yaml_content = content.split("```yaml")[1].split("```")[0].strip() if "```yaml" in content else content
+        parsed = yaml.safe_load(yaml_content)
+        
+        result_message = Message(
+            actor="extract_topics",
+            type="action_result",
+            payload={"topics": parsed.get("topics", [])[:5]}
+        )
+        
+        return [result_message]
+
+
+@policy_spec_mcp_tool(description="Rephrase topics and generate ELI5 answers")
+class ProcessTopicPolicy(Policy):
+    ctx: "AppContext"
+    
+    async def __call__(
+        self,
+        topic_title: str,
+        questions: list[str],
+        transcript: str,
+    ) -> list[Message]:
+        """
+        Rephrase topic title and questions, generate simple answers.
+        :param topic_title: Original topic title
+        :param questions: List of questions about the topic
+        :param transcript: Video transcript for context
+        """
+        prompt = f"""You are a content simplifier for children. Given a topic and questions from a YouTube video, rephrase the topic title and questions to be clearer, and provide simple ELI5 (Explain Like I'm 5) answers.
+
+TOPIC: {topic_title}
+
+QUESTIONS:
+{chr(10).join([f"- {q}" for q in questions])}
+
+TRANSCRIPT EXCERPT:
+{transcript[:3000]}
+
+For topic title and questions:
+1. Keep them catchy and interesting, but short
+
+For your answers:
+1. Format them using HTML with <b> and <i> tags for highlighting
+2. Prefer lists with <ol> and <li> tags. Ideally, <li> followed by <b> for key points
+3. Quote important keywords but explain them in easy-to-understand language
+4. Keep answers interesting but short (max 100 words per answer)
+
+Format your response in YAML:
+
+```yaml
+rephrased_title: |
+    Interesting topic title in 10 words
+questions:
+  - original: |
+        {questions[0] if questions else ''}
+    rephrased: |
+        Interesting question in 15 words
+    answer: |
+        Simple answer that a 5-year-old could understand
+```
+"""
+        
+        system_message = Message(
+            actor="system",
+            type="text",
+            payload={"content": "You are a content simplification assistant."}
+        )
+        prompt_message = Message(
+            actor="user",
+            type="text",
+            payload={"content": prompt}
+        )
+        
+        history = [system_message, prompt_message]
+        response = await self.ctx.llm(observations=history, options=[])
+        
+        # Extract YAML from response
+        content = response[-1].payload.get("content", "")
+        yaml_content = content.split("```yaml")[1].split("```")[0].strip() if "```yaml" in content else content
+        parsed = yaml.safe_load(yaml_content)
+        
+        result_message = Message(
+            actor="process_topic",
+            type="action_result",
+            payload={
+                "rephrased_title": parsed.get("rephrased_title", topic_title),
+                "questions": parsed.get("questions", [])
+            }
+        )
+        
+        return [result_message]
+
+
+@policy_spec_mcp_tool(description="YouTube video summarizer orchestrator")
+class YouTubeSummarizer(Policy):
+    ctx: "AppContext"
+    
+    async def __call__(
+        self,
+        url: str,
+    ) -> list[Message]:
+        """
+        Process YouTube video to extract topics, questions, and generate ELI5 answers.
+        :param url: YouTube video URL
+        """
+        print(f"\n--- Processing YouTube URL: {url} ---")
+        
+        # Step 1: Get video info
+        video_info = get_video_info(url)
+        if "error" in video_info:
+            return [Message(
+                actor="youtube_summarizer",
+                type="text",
+                payload={"content": f"Error: {video_info['error']}"}
+            )]
+        
+        print(f"Video: {video_info['title']}")
+        print(f"Transcript length: {len(video_info['transcript'])} chars")
+        
+        # Step 2: Extract topics and questions
+        print("\n--- Extracting topics and questions ---")
+        extract_result = await self.ctx.extract_topics(
+            title=video_info["title"],
+            transcript=video_info["transcript"]
+        )
+        topics = extract_result[0].payload["topics"]
+        print(f"Found {len(topics)} topics")
+        
+        # Step 3: Process each topic
+        print("\n--- Processing topics ---")
+        processed_topics = []
+        for i, topic in enumerate(topics):
+            print(f"Processing topic {i+1}/{len(topics)}: {topic['title']}")
+            questions = [q for q in topic.get("questions", [])]
+            
+            if not questions:
+                continue
+            
+            process_result = await self.ctx.process_topic(
+                topic_title=topic["title"],
+                questions=questions,
+                transcript=video_info["transcript"]
+            )
+            
+            processed = process_result[0].payload
+            processed_topics.append({
+                "original_title": topic["title"],
+                "rephrased_title": processed["rephrased_title"],
+                "questions": processed["questions"]
+            })
+        
+        # Step 4: Format output
+        print("\n--- Generating Summary ---")
+        output = f"""
+# {video_info['title']}
+
+**Video ID**: {video_info['video_id']}
+**Thumbnail**: {video_info['thumbnail_url']}
+
+---
+
+"""
+        for topic in processed_topics:
+            output += f"## {topic['rephrased_title']}\n\n"
+            for q in topic['questions']:
+                output += f"### {q.get('rephrased', q.get('original', ''))}\n\n"
+                output += f"{q.get('answer', '')}\n\n"
+        
+        print("\n" + "=" * 50)
+        print("Processing completed successfully!")
+        print("=" * 50 + "\n")
+        
+        return [Message(
+            actor="youtube_summarizer",
+            type="text",
+            payload={
+                "content": output,
+                "video_info": video_info,
+                "topics": processed_topics
+            }
+        )]
+
+
+# --- App Context ---
+class AppContext(BaseContext):
+    def __init__(self, runner):
+        super().__init__(runner)
+        self.llm = self._bind(OpenAILLMPolicy_v1)
+        self.extract_topics = self._bind(ExtractTopicsPolicy)
+        self.process_topic = self._bind(ProcessTopicPolicy)
+        self.youtube_summarizer = self._bind(YouTubeSummarizer)
+
+
+# --- Main Execution ---
 async def main():
-    print("--- Starting YouTube Summarizer Demo ---")
-    runner = InMemoryRunner(registry)
+    print("--- Starting YouTube Summarizer ---")
     
-    initial_action = Action(
-        payload="https://youtube.com/watch?v=12345",
-        edges=("get_transcript", "summarize_text")
-    )
+    # TODO: Replace with your YouTube URL
+    # url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    url = "https://youtu.be/h_Zk4fDDcSY?si=LaxkHlRgWTCzq1n5"
     
-    result = await runner.execute("youtube_agent", initial_action)
-    print(f"\nFinal Result: {result}")
+    runner = InMemoryRunner()
+    ctx = AppContext(runner)
+    result = await ctx.youtube_summarizer(url=url)
+    
+    # Print summary
+    print("\n" + result[-1].payload['content'])
+    
+    # Optionally save to file
+    with open("youtube_summary.md", "w") as f:
+        f.write(result[-1].payload['content'])
+    print("\nSummary saved to youtube_summary.md")
+    
+    print("\n--- Demo Complete ---")
 
 if __name__ == "__main__":
     asyncio.run(main())
