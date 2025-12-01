@@ -1,3 +1,5 @@
+"""port of https://github.com/The-Pocket/PocketFlow-Tutorial-Youtube-Made-Simple"""
+
 import asyncio
 import re
 import yaml
@@ -139,37 +141,44 @@ class ProcessTopicPolicy(Policy):
         :param questions: List of questions about the topic
         :param transcript: Video transcript for context
         """
-        prompt = f"""You are a content simplifier for children. Given a topic and questions from a YouTube video, rephrase the topic title and questions to be clearer, and provide simple ELI5 (Explain Like I'm 5) answers.
+        prompt = f"""You are a content analyst. Given a topic and questions from a YouTube video, rephrase them to be clear and concise, then provide accurate, informative answers.
 
 TOPIC: {topic_title}
 
 QUESTIONS:
-{chr(10).join([f"- {q}" for q in questions])}
+{chr(10).join([f"{i+1}. {q}" for i, q in enumerate(questions)])}
 
-TRANSCRIPT EXCERPT:
-{transcript[:3000]}
+FULL TRANSCRIPT:
+{transcript}
 
-For topic title and questions:
-1. Keep them catchy and interesting, but short
+Instructions:
+1. Rephrase the topic title to be clear and engaging (max 10 words)
+2. Rephrase each question to be direct and specific (max 20 words)
+3. Answer each question:
+   - Use markdown formatting (**bold** for emphasis, *italic* for technical terms)
+   - Use bullet points or numbered lists where appropriate
+   - Be concise but informative (2-3 sentences or 80-120 words)
+   - Base answers strictly on the transcript content
+   - Avoid condescending language
 
-For your answers:
-1. Format them using HTML with <b> and <i> tags for highlighting
-2. Prefer lists with <ol> and <li> tags. Ideally, <li> followed by <b> for key points
-3. Quote important keywords but explain them in easy-to-understand language
-4. Keep answers interesting but short (max 100 words per answer)
-
-Format your response in YAML:
+Format your response in YAML (ensure all questions are included):
 
 ```yaml
 rephrased_title: |
-    Interesting topic title in 10 words
+    Clear, engaging topic title
 questions:
   - original: |
-        {questions[0] if questions else ''}
+        First question here
     rephrased: |
-        Interesting question in 15 words
+        Rephrased first question
     answer: |
-        Simple answer that a 5-year-old could understand
+        Answer based on transcript
+  - original: |
+        Second question here
+    rephrased: |
+        Rephrased second question
+    answer: |
+        Answer based on transcript
 ```
 """
         
