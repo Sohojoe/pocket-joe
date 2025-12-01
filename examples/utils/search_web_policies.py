@@ -4,10 +4,6 @@ from ddgs import DDGS
 from pocket_joe import BaseContext, Message, Policy
 from pocket_joe import policy_spec_mcp_tool
 
-@policy_spec_mcp_tool(
-    description="Calls OpenAI GPT-4 with tool support",
-)
-
 @policy_spec_mcp_tool(description="Performs web search")
 class WebSeatchDdgsPolicy(Policy):
     async def __call__(

@@ -99,15 +99,9 @@ def map_response_to_messagess(response: Any) -> list[Message]:
             
     return new_messages
 
-@policy_spec_mcp_tool(
-    description="Calls OpenAI GPT-4 with tool support",
-)
+@policy_spec_mcp_tool(description="Calls OpenAI GPT-4 with tool support")
 class OpenAILLMPolicy_v1(Policy):
-    async def __call__(
-        self,
-        observations: list[Message],
-        options: list[str],
-    ) -> list[Message]:
+    async def __call__(self, observations: list[Message], options: list[str]) -> list[Message]:
         """LLM policy that calls OpenAI GPT-4 with tool support.
         :param observations: List of Messages representing the conversation history + new input
         :param options: Set of allowed options the LLM can call (policy names that will map to tools)
