@@ -239,25 +239,34 @@ class YouTubeSummarizer(Policy):
         topics = extract_result[0].payload["topics"]
         print(f"Found {len(topics)} topics")
         
-        # Step 3: Process each topic
+        # Step 3: Process each topic concurrently
         print("\n--- Processing topics ---")
-        processed_topics = []
+        
+        # Create tasks for all topics with questions
+        tasks = []
+        topic_indices = []
         for i, topic in enumerate(topics):
-            print(f"Processing topic {i+1}/{len(topics)}: {topic['title']}")
             questions = [q for q in topic.get("questions", [])]
-            
             if not questions:
                 continue
             
-            process_result = await self.ctx.process_topic(
+            print(f"Queuing topic {i+1}/{len(topics)}: {topic['title']}")
+            tasks.append(self.ctx.process_topic(
                 topic_title=topic["title"],
                 questions=questions,
                 transcript=video_info["transcript"]
-            )
-            
-            processed = process_result[0].payload
+            ))
+            topic_indices.append(i)
+        
+        # Execute all tasks concurrently
+        results = await asyncio.gather(*tasks)
+        
+        # Build processed topics list
+        processed_topics = []
+        for i, result in zip(topic_indices, results):
+            processed = result[0].payload
             processed_topics.append({
-                "original_title": topic["title"],
+                "original_title": topics[i]["title"],
                 "rephrased_title": processed["rephrased_title"],
                 "questions": processed["questions"]
             })
