@@ -1,14 +1,11 @@
 import asyncio
-# from pocket_joe import Action, Message, Registry, Context, InMemoryRunner, loop_wrapper, invoke_action, policy_spec
 from pocket_joe import (
     Message, 
     policy_spec_mcp_resource, policy_spec_mcp_tool,
     BaseContext, 
     InMemoryRunner, 
     Policy,
-    # loop_wrapper, invoke_action,
     )
-from dataclasses import replace
 from examples.utils import OpenAILLMPolicy_v1, WebSeatchDdgsPolicy
 
 # --- Tools ---
@@ -25,9 +22,6 @@ class SearchAgent(Policy):
         :param prompt: The user prompt to process
         :param max_iterations: Maximum number of iterations to run
         """
-        # Build sub-action for LLM
-        # payload['ledger'] = ctx.get_ledger()  # Pass conversation history to LLM
-        # payload = [{"role": "system", "content": "You are an AI assistant that can use tools to help answer user questions."}]
         system_message = Message(
             actor="system",
             type="text",
@@ -58,9 +52,6 @@ class AppContext(BaseContext):
 
     def __init__(self, runner):
         super().__init__(runner)
-        # self.llm = self._bind(OpenAILLMPolicy_v1)
-        # self.web_search = self._bind(WebSeatchDdgsPolicy)
-        # self.search_agent = self._bind(SearchAgent)
         self.llm = self._bind(OpenAILLMPolicy_v1)
         self.web_search = self._bind(WebSeatchDdgsPolicy)
         self.search_agent = self._bind(SearchAgent)
@@ -69,11 +60,6 @@ class AppContext(BaseContext):
 
 async def main():
     print("--- Starting Search Agent Demo ---")
-    
-    # Initialize Registry with all policies
-    # registry = Registry(search_agent)
-    # registry.register_policy(openai_llm_policy_v1, alias="llm_policy")
-    # registry.register_policy(search_web_duckduckgo_policy, alias="search_web_policy")
     
     runner = InMemoryRunner()
     ctx = AppContext(runner)

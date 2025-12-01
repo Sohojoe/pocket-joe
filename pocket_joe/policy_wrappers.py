@@ -69,3 +69,33 @@ def invoke_options_wrapper(policy_instance: Policy, ctx: BaseContext):
         option_results = await _call_options_in_parallel(ctx, selected_actions)
         return selected_actions + option_results
     return wrapped
+
+# proposals for additional wrappers:
+# # Type alias for clarity
+# WrapperFactory = Callable[[Policy, BaseContext], Callable[..., Awaitable[list[Message]]]]
+
+# # Example: tracing_wrapper
+# def tracing_wrapper(policy_instance: Policy, ctx: BaseContext):
+#     """Wrapper that traces execution."""
+#     async def wrapped(**kwargs):
+#         span = tracer.start_span(policy_instance.__class__.__name__)
+#         try:
+#             return await policy_instance(**kwargs)
+#         finally:
+#             span.end()
+#     return wrapped
+
+# # Example: retry_wrapper
+# def retry_wrapper_factory(max_retries: int = 3):
+#     """Returns a wrapper configured with max_retries."""
+#     def wrapper(policy_instance: Policy, ctx: BaseContext):
+#         async def wrapped(**kwargs):
+#             for attempt in range(max_retries):
+#                 try:
+#                     return await policy_instance(**kwargs)
+#                 except Exception as e:
+#                     if attempt == max_retries - 1:
+#                         raise
+#                     await asyncio.sleep(2 ** attempt)
+#         return wrapped
+#     return wrapper
