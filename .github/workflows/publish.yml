@@ -54,6 +54,16 @@ jobs:
     - name: Set up Python
       run: uv python install 3.12
     
+    - name: Inject build number into version
+      run: |
+        # Read current version from pyproject.toml
+        VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2)
+        NEW_VERSION="${VERSION}.${GITHUB_RUN_NUMBER}"
+        echo "Building version: $NEW_VERSION"
+        
+        # Update pyproject.toml with new version
+        sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" pyproject.toml
+    
     - name: Build package
       run: |
         uv build
