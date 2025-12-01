@@ -1,6 +1,7 @@
 """Demo of YouTube transcription policy."""
 
 import asyncio
+import sys
 from pocket_joe import BaseContext, InMemoryRunner
 from examples.utils import TranscribeYouTubePolicy
 
@@ -12,9 +13,11 @@ class AppContext(BaseContext):
 
 
 async def main():
-    # Example YouTube URL
-    # url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-    url = "https://youtu.be/h_Zk4fDDcSY?si=LaxkHlRgWTCzq1n5"
+    # Get URL from command line or use default
+    if len(sys.argv) > 1:
+        url = sys.argv[1]
+    else:
+        url = "https://youtu.be/h_Zk4fDDcSY?si=LaxkHlRgWTCzq1n5"
     
     print(f"Transcribing: {url}\n")
     
@@ -32,8 +35,8 @@ async def main():
     print(f"Video ID: {payload['video_id']}")
     print(f"Thumbnail: {payload['thumbnail_url']}")
     print(f"Transcript length: {len(payload['transcript'])} chars")
-    print(f"\nFirst 500 chars of transcript:")
-    print(payload['transcript'][:500] + "...")
+    print(f"\nFull transcript:")
+    print(payload['transcript'])
 
 
 if __name__ == "__main__":
