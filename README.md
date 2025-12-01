@@ -126,20 +126,41 @@ A correct, simple, performant, and pythonic framework for building durable AI ag
 ### Prerequisites
 
 - Python 3.12+
-- `uv` (recommended)
 
 ### Installation
 
 ```bash
-uv sync
+uv add pocket-joe
+```
+
+Or with pip:
+
+```bash
+pip install pocket-joe
+```
+
+To install with example dependencies:
+
+```bash
+uv add pocket-joe --extra examples
+# or
+pip install pocket-joe[examples]
+```
+
+### Development Setup
+
+```bash
+git clone https://github.com/Sohojoe/pocket-joe.git
+cd pocket-joe
+uv sync --dev --all-extras
 ```
 
 ### Running Examples
 
-First, install with examples dependencies:
+Set your API key:
 
 ```bash
-uv sync --extra examples
+export OPENAI_API_KEY=sk-...
 ```
 
 #### Search Agent (ReAct)
