@@ -1,6 +1,9 @@
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable, Protocol, TYPE_CHECKING
+from typing import Any, Callable, Awaitable, Protocol, TYPE_CHECKING, ClassVar, TypeVar
 from collections.abc import Iterable
+from contextvars import ContextVar
+
+T = TypeVar('T', bound='BaseContext')
 
 # from pocket_joe.context import BaseContext
 
@@ -34,9 +37,36 @@ class Policy:
 
 
 class BaseContext:
-    """Framework base - hide plumbing here."""
+    """Framework base - hide plumbing here.
+
+    Each subclass gets its own ContextVar for isolation.
+    """
+    _ctx_var: ClassVar[ContextVar['BaseContext']] = None
+
+    def __init_subclass__(cls):
+        """Create a separate ContextVar for each subclass"""
+        super().__init_subclass__()
+        cls._ctx_var = ContextVar(f'{cls.__module__}.{cls.__name__}_context')
+
     def __init__(self, runner):
+        if self._ctx_var is None:
+            # For BaseContext itself (if instantiated directly)
+            self.__class__._ctx_var = ContextVar(f'{self.__class__.__module__}.{self.__class__.__name__}_context')
+
         self._runner = runner
+        # Set context once during initialization
+        self._ctx_var.set(self)
+
+    @classmethod
+    def get_ctx(cls: type[T]) -> T:
+        """Get the current context from contextvar
+
+        Returns the context instance of the actual subclass type.
+        For example, AppContext.get_ctx() returns AppContext instance.
+        """
+        if cls._ctx_var is None:
+            raise RuntimeError(f"{cls.__name__} context not initialized")
+        return cls._ctx_var.get()
 
     def _bind[T: Policy](self, policy: type[T]) -> T:
         """Bind a policy to this context using runner's strategy.
