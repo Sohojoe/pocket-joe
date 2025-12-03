@@ -121,7 +121,7 @@ class InMemoryRunner:
 
 ### Phase 1: Core Infrastructure
 
-#### Task 1: Implement ContextVar-based BaseContext
+#### ✅ Task 1: Implement ContextVar-based BaseContext (COMPLETED)
 **File**: `pocket_joe/core.py:36-66`
 
 - Add `_ctx_var: ClassVar[ContextVar]` class variable (per-subclass)
@@ -164,60 +164,28 @@ class BaseContext:
         return cls._ctx_var.get()
 ```
 
-#### Task 2: Create @policy Decorator Using Tool.from_function()
-**File**: `pocket_joe/decorators.py` (new)
+#### ✅ Task 2: Create policy.tool and policy.resource Decorators (COMPLETED)
+**File**: `pocket_joe/policy.py` (new)
 
-- Use FastMCP's `Tool.from_function()` for schema extraction
-- Store metadata on function without wrapping
-- Preserve original function for normal calls
+**Completed implementation:**
+- Created `PolicyDecorators` class with `.tool()` and `.resource()` methods
+- Uses FastMCP's `Tool.from_function()` and `Resource.from_function()`
+- Stores FastMCP metadata objects on functions
+- Preserves original function (no wrapping)
+- Exported as singleton `policy` for `@policy.tool` and `@policy.resource` usage
+- Full test coverage in `tests/test_policy.py` (12 tests passing)
 
-**Implementation**:
-```python
-from fastmcp.tools import Tool
-from typing import Callable
+**Files created:**
+- `pocket_joe/policy.py` - Policy decorator implementation
+- `tests/test_policy.py` - Comprehensive test suite
 
-def policy(description: str | None = None):
-    """Decorator that extracts FastMCP metadata without MCP registration"""
-    def decorator(func: Callable):
-        tool = Tool.from_function(func, description=description)
-        func._tool_metadata = tool
-        func._tool_name = tool.name
-        func._tool_description = tool.description
-        func._tool_schema = tool.input_schema
-        return func
-    return decorator
-```
+**Dependencies added:**
+- `fastmcp>=2.13.2` added to `pyproject.toml`
 
 #### Task 3: Create policy_spec_mcp_tool and policy_spec_mcp_resource Wrappers
 **File**: `pocket_joe/policy_spec_mcp.py` (update)
 
-- Replace current implementation
-- Follow MCP `mcp.tool` and `mcp.resource` patterns
-- Support both tool and resource types
-
-**Implementation**:
-```python
-from fastmcp.tools import Tool
-from fastmcp.resources import Resource
-
-def policy_spec_mcp_tool(description: str | None = None):
-    """Wrapper for tool-type policies (follows mcp.tool pattern)"""
-    def decorator(func):
-        tool = Tool.from_function(func, description=description)
-        func._tool_metadata = tool
-        func._policy_type = "tool"
-        return func
-    return decorator
-
-def policy_spec_mcp_resource(description: str | None = None):
-    """Wrapper for resource-type policies (follows mcp.resource pattern)"""
-    def decorator(func):
-        resource = Resource.from_function(func, description=description)
-        func._resource_metadata = resource
-        func._policy_type = "resource"
-        return func
-    return decorator
-```
+**Status**: Skipped - replaced by Task 2's `@policy.tool` and `@policy.resource` pattern which provides cleaner API matching FastMCP's `@mcp.tool` / `@mcp.resource` pattern.
 
 #### Task 4: Create PolicyProxy Class
 **File**: `pocket_joe/policy_proxy.py` (new)
