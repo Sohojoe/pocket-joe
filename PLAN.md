@@ -47,19 +47,35 @@ class AppContext(BaseContext):
 #### 1. ContextVar-Based Context Management
 ```python
 from contextvars import ContextVar
+from typing import ClassVar
 
 class BaseContext:
-    _ctx_var: ContextVar['BaseContext'] = ContextVar('pocket_joe_context')
+    _ctx_var: ClassVar[ContextVar['BaseContext']] = None
+
+    def __init_subclass__(cls):
+        """Create a separate ContextVar for each subclass"""
+        super().__init_subclass__()
+        cls._ctx_var = ContextVar(f'{cls.__module__}.{cls.__name__}_context')
+
+    def __init__(self, runner):
+        if self._ctx_var is None:
+            # For BaseContext itself (if instantiated directly)
+            self.__class__._ctx_var = ContextVar(f'{self.__class__.__module__}.{self.__class__.__name__}_context')
+
+        self.runner = runner
+        self._registry = {}
+        runner._registry = self._registry
+        runner._context = self
+
+        # Set context once during initialization
+        self._ctx_var.set(self)
 
     @classmethod
     def get_ctx(cls) -> 'BaseContext':
+        """Get the current context from contextvar"""
+        if cls._ctx_var is None:
+            raise RuntimeError(f"{cls.__name__} context not initialized")
         return cls._ctx_var.get()
-
-    def _set_ctx(self):
-        return self._ctx_var.set(self)
-
-    def _reset_ctx(self, token):
-        self._ctx_var.reset(token)
 ```
 
 #### 2. Tool Metadata Extraction
@@ -90,16 +106,15 @@ class PolicyProxy:
         return await self.runner.execute(self.name, kwargs)
 ```
 
-#### 4. Runner Context Management
+#### 4. Runner Execution
 ```python
 class InMemoryRunner:
     async def execute(self, policy_name: str, kwargs: dict):
+        """Execute policy - context already set during initialization"""
         func = self._registry[policy_name]
-        token = self._context._set_ctx()
-        try:
-            return await func(**kwargs)
-        finally:
-            self._context._reset_ctx(token)
+        # Apply wrappers and execute
+        wrapped = invoke_options_wrapper_for_func(func, self._context)
+        return await wrapped(**kwargs)
 ```
 
 ## Implementation Plan
@@ -109,31 +124,44 @@ class InMemoryRunner:
 #### Task 1: Implement ContextVar-based BaseContext
 **File**: `pocket_joe/core.py:36-66`
 
-- Add `_ctx_var: ContextVar` class variable
+- Add `_ctx_var: ClassVar[ContextVar]` class variable (per-subclass)
+- Implement `__init_subclass__()` to create ContextVar for each subclass
 - Implement `get_ctx()` classmethod
-- Add `_set_ctx()` and `_reset_ctx()` methods
-- Update `__init__` to link runner ↔ context
+- Update `__init__` to set context once during initialization
+- Link runner ↔ context
 
 **Changes**:
 ```python
+from contextvars import ContextVar
+from typing import ClassVar
+
 class BaseContext:
-    _ctx_var: ContextVar['BaseContext'] = ContextVar('pocket_joe_context')
+    _ctx_var: ClassVar[ContextVar['BaseContext']] = None
+
+    def __init_subclass__(cls):
+        """Create a separate ContextVar for each subclass"""
+        super().__init_subclass__()
+        cls._ctx_var = ContextVar(f'{cls.__module__}.{cls.__name__}_context')
 
     def __init__(self, runner):
+        if self._ctx_var is None:
+            # For BaseContext itself (if instantiated directly)
+            self.__class__._ctx_var = ContextVar(f'{self.__class__.__module__}.{self.__class__.__name__}_context')
+
         self.runner = runner
         self._registry = {}
         runner._registry = self._registry
         runner._context = self
 
+        # Set context once during initialization
+        self._ctx_var.set(self)
+
     @classmethod
     def get_ctx(cls) -> 'BaseContext':
+        """Get the current context from contextvar"""
+        if cls._ctx_var is None:
+            raise RuntimeError(f"{cls.__name__} context not initialized")
         return cls._ctx_var.get()
-
-    def _set_ctx(self):
-        return self._ctx_var.set(self)
-
-    def _reset_ctx(self, token):
-        self._ctx_var.reset(token)
 ```
 
 #### Task 2: Create @policy Decorator Using Tool.from_function()
@@ -259,25 +287,21 @@ class BaseContext:
 **File**: `pocket_joe/memory_runtime.py:84-93`
 
 - Remove or update `_bind_strategy()` (now handled by PolicyProxy)
-- Add `execute()` method with context management
+- Add `execute()` method
 - Integrate with `invoke_options_wrapper`
+- Context is already set during BaseContext.__init__, no need to set/reset
 
 **Changes**:
 ```python
 class InMemoryRunner:
     async def execute(self, policy_name: str, kwargs: dict) -> list[Message]:
-        """Execute policy with context management"""
+        """Execute policy - context already set during initialization"""
         func = self._registry[policy_name]
 
-        # Set context for this execution
-        token = self._context._set_ctx()
-        try:
-            # Apply wrappers
-            wrapped = invoke_options_wrapper_for_func(func, self._context)
-            result = await wrapped(**kwargs)
-            return result
-        finally:
-            self._context._reset_ctx(token)
+        # Apply wrappers and execute
+        wrapped = invoke_options_wrapper_for_func(func, self._context)
+        result = await wrapped(**kwargs)
+        return result
 ```
 
 #### Task 7: Update invoke_options_wrapper for Functions
@@ -680,22 +704,26 @@ Inside function: AppContext.get_ctx()
 
 ### Execution Flow
 ```
+Initialization:
+  ctx = AppContext(runner)
+    ↓
+  BaseContext.__init__ sets context:
+    self._ctx_var.set(self)  # Set once
+    ↓
 User Code:
   result = await ctx.search_agent(prompt="test")
     ↓
 PolicyProxy routes to:
   runner.execute("search_agent", {"prompt": "test"})
     ↓
-Runner sets context:
-  token = ctx._set_ctx()
+Runner executes:
+  wrapped = invoke_options_wrapper_for_func(func, self._context)
+  result = await wrapped(**kwargs)
     ↓
 Function executes:
   async def search_agent(prompt):
-      ctx = AppContext.get_ctx()  # Gets the context
+      ctx = AppContext.get_ctx()  # Gets the context (already set)
       await ctx.llm(...)           # Nested policy call
-    ↓
-Runner resets context:
-  ctx._reset_ctx(token)
     ↓
 Result returned to user
 ```
