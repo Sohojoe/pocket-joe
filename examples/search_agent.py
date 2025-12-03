@@ -11,7 +11,6 @@ from examples.utils import OpenAILLMPolicy_v1, WebSeatchDdgsPolicy
 # --- Tools ---
 @policy_spec_mcp_tool(description="Orchestrator with LLM and search")
 class SearchAgent(Policy):
-    ctx: "AppContext" # ocerride to specify context type
     async def __call__(
         self,
         prompt: str,
@@ -22,6 +21,7 @@ class SearchAgent(Policy):
         :param prompt: The user prompt to process
         :param max_iterations: Maximum number of iterations to run
         """
+
         system_message = Message(
             actor="system",
             type="text",
@@ -33,13 +33,14 @@ class SearchAgent(Policy):
             payload={"content": prompt}
         )
 
+        ctx = AppContext.get_ctx()
         history = [system_message, prompt_message]
 
         iteration = 0
         while iteration < max_iterations:
             iteration += 1
             print(f"\n--- Search Agent Iteration {iteration} ---")
-            selected_actions = await self.ctx.llm(observations=history, options=["web_search"])
+            selected_actions = await ctx.llm(observations=history, options=["web_search"])
             history.extend(selected_actions)
             # stop of no tools called
             if not any(msg.type == "action_call" for msg in selected_actions):

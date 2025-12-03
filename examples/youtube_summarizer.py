@@ -15,7 +15,6 @@ from examples.utils import OpenAILLMPolicy_v1, TranscribeYouTubePolicy
 # --- Policies ---
 @policy_spec_mcp_tool(description="Extract topics and questions from YouTube transcript")
 class ExtractTopicsPolicy(Policy):
-    ctx: "AppContext"
     
     async def __call__(
         self,
@@ -64,9 +63,11 @@ topics:
             type="text",
             payload={"content": prompt}
         )
-        
+
+        ctx = AppContext.get_ctx()
         history = [system_message, prompt_message]
-        response = await self.ctx.llm(observations=history, options=[])
+
+        response = await ctx.llm(observations=history, options=[])
         
         # Extract YAML from response
         content = response[-1].payload.get("content", "")
@@ -84,8 +85,6 @@ topics:
 
 @policy_spec_mcp_tool(description="Rephrase topics and generate ELI5 answers")
 class ProcessTopicPolicy(Policy):
-    ctx: "AppContext"
-    
     async def __call__(
         self,
         topic_title: str,
@@ -151,7 +150,9 @@ questions:
         )
         
         history = [system_message, prompt_message]
-        response = await self.ctx.llm(observations=history, options=[])
+        ctx = AppContext.get_ctx()
+
+        response = await ctx.llm(observations=history, options=[])
         
         # Extract YAML from response
         content = response[-1].payload.get("content", "")
@@ -172,8 +173,6 @@ questions:
 
 @policy_spec_mcp_tool(description="YouTube video summarizer orchestrator")
 class YouTubeSummarizer(Policy):
-    ctx: "AppContext"
-    
     async def __call__(
         self,
         url: str,
@@ -184,8 +183,10 @@ class YouTubeSummarizer(Policy):
         """
         print(f"\n--- Processing YouTube URL: {url} ---")
         
+        ctx = AppContext.get_ctx()
+
         # Step 1: Get video info
-        result = await self.ctx.transcribe_youtube(url=url)
+        result = await ctx.transcribe_youtube(url=url)
         video_info = result[0].payload
         
         if "error" in video_info:
@@ -200,7 +201,7 @@ class YouTubeSummarizer(Policy):
         
         # Step 2: Extract topics and questions
         print("\n--- Extracting topics and questions ---")
-        extract_result = await self.ctx.extract_topics(
+        extract_result = await ctx.extract_topics(
             title=video_info["title"],
             transcript=video_info["transcript"]
         )
@@ -219,7 +220,7 @@ class YouTubeSummarizer(Policy):
                 continue
             
             print(f"Queuing topic {i+1}/{len(topics)}: {topic['title']}")
-            tasks.append(self.ctx.process_topic(
+            tasks.append(ctx.process_topic(
                 topic_title=topic["title"],
                 questions=questions,
                 transcript=video_info["transcript"]

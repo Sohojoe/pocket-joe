@@ -37,11 +37,12 @@ class OpenAILLMPolicy_v1(Policy):
         :param observations: List of Messages representing the conversation history + new input
         :param options: Set of allowed options the LLM can call (policy names that will map to tools)
         """
+        ctx = AppContext.get_ctx()
         response = await openai.chat.completions.create(
             model="gpt-4",
             messages=to_completions_messages(observations),
-            tools=to_completions_tools(self.ctx, options))
-        return map_response_to_messagess(response)
+            tools=to_completions_tools(ctx, options))
+        return map_response_to_messages(response)
 ```
 
 A simple heuristic policy:
@@ -68,24 +69,23 @@ An orchestrator policy that coordinates LLM + search:
 ```python
 @policy_spec_mcp_tool(description="Orchestrator with LLM and search")
 class SearchAgent(Policy):
-    ctx: "AppContext"  # Override to specify context type
-    
     async def __call__(self, prompt: str) -> list[Message]:
         """
         Orchestrator that gives the LLM access to web search.
         :param prompt: The user prompt to process
         """
-        system_message = Message(actor="system", type="text", 
+        ctx = AppContext.get_ctx()
+        system_message = Message(actor="system", type="text",
             payload={"content": "You are an AI assistant that can use tools to help answer user questions."})
         prompt_message = Message(actor="user", type="text", payload={"content": prompt})
 
         history = [system_message, prompt_message]
         while True:
-            selected_actions = await self.ctx.llm(observations=history, options=["web_search"])
+            selected_actions = await ctx.llm(observations=history, options=["web_search"])
             history.extend(selected_actions)
             if not any(msg.type == "action_call" for msg in selected_actions):
                 break
-        
+
         return history
 ```
 
