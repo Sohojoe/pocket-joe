@@ -3,13 +3,13 @@
 import asyncio
 import sys
 from pocket_joe import BaseContext, InMemoryRunner
-from examples.utils import TranscribeYouTubePolicy
+from examples.utils import transcribe_youtube_policy
 
 
 class AppContext(BaseContext):
     def __init__(self, runner):
         super().__init__(runner)
-        self.transcribe_youtube = self._bind(TranscribeYouTubePolicy)
+        self.transcribe_youtube = self._bind(transcribe_youtube_policy)
 
 
 async def main():

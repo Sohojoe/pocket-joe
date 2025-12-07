@@ -1,8 +1,7 @@
 import asyncio
 from typing import Any, List, Callable
 
-from .policy_wrappers import invoke_options_wrapper
-from .core import BaseContext, Policy, Message
+from .core import BaseContext, Message
 
 # from .core import Action, Context, Message
 # from .registry import Registry
@@ -81,12 +80,21 @@ from .core import BaseContext, Policy, Message
 
 
 class InMemoryRunner:
-    def _bind_strategy(self, policy: type[Policy], ctx: BaseContext):
-        """Bind a policy to the context - simple closure with ctx captured."""
+    def _bind_strategy(self, policy: Callable, ctx: BaseContext):
+        """Bind a policy function to the context.
+        
+        Args:
+            policy: The policy function to bind
+            ctx: The context instance
+            
+        Returns:
+            Async function that wraps the policy with options execution
+        """
+        from .policy_wrappers import invoke_options_wrapper_for_func
+        
         async def bound(**kwargs):
-            instance = policy(ctx)
-            instance = invoke_options_wrapper(instance, ctx)
-            selected_actions = await instance(**kwargs)
+            wrapped = invoke_options_wrapper_for_func(policy, ctx)
+            selected_actions = await wrapped(**kwargs)
             return selected_actions
 
         return bound

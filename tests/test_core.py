@@ -2,7 +2,7 @@
 
 import pytest
 from dataclasses import replace
-from pocket_joe.core import Message, Policy, BaseContext
+from pocket_joe.core import Message, BaseContext
 
 
 class TestMessage:
@@ -51,34 +51,6 @@ class TestMessage:
         assert msg1.type == msg2.type
 
 
-class TestPolicy:
-    """Test Policy base class."""
-    
-    def test_policy_requires_context(self):
-        """Test that Policy requires a context."""
-        # Create a mock context
-        class MockRunner:
-            pass
-        
-        ctx = BaseContext(MockRunner())
-        
-        # Policy can be instantiated with context
-        policy = Policy(ctx)
-        assert policy.ctx is ctx
-    
-    @pytest.mark.asyncio
-    async def test_policy_call_not_implemented(self):
-        """Test that base Policy.__call__ raises NotImplementedError."""
-        class MockRunner:
-            pass
-        
-        ctx = BaseContext(MockRunner())
-        policy = Policy(ctx)
-        
-        with pytest.raises(NotImplementedError):
-            await policy()
-
-
 class TestBaseContext:
     """Test BaseContext class."""
     
@@ -93,69 +65,95 @@ class TestBaseContext:
         assert ctx._runner is runner
     
     def test_bind_policy(self):
-        """Test _bind method delegates to runner's strategy."""
-        class MockPolicy(Policy):
-            async def __call__(self):
-                return [Message(actor="test", type="test", payload={})]
+        """Test _bind method works with function-based policies."""
+        from pocket_joe import policy
         
-        class MockRunner:
-            def _bind_strategy(self, policy_class, context):
-                # Return a bound instance
-                instance = policy_class(context)
-                return instance
+        @policy.tool(description="Test policy")
+        async def test_policy(arg: str) -> list[Message]:
+            """Test policy function"""
+            return [Message(actor="test", type="test", payload={"arg": arg})]
         
-        runner = MockRunner()
+        from pocket_joe import InMemoryRunner
+        runner = InMemoryRunner()
         ctx = BaseContext(runner)
         
-        bound = ctx._bind(MockPolicy)
-        assert isinstance(bound, MockPolicy)
-        assert bound.ctx is ctx
-        assert hasattr(bound, '__policy_class__')
-        assert bound.__policy_class__ is MockPolicy
+        # Bind the function-based policy
+        bound = ctx._bind(test_policy)
+        
+        # Verify the bound callable has the policy function attached
+        assert hasattr(bound, '__policy_func__')
+        assert bound.__policy_func__ is test_policy
+        
+        # Verify it has tool metadata
+        assert hasattr(test_policy, '_tool_metadata')
+        assert hasattr(test_policy, '_option_schema')
+    
+    @pytest.mark.asyncio
+    async def test_bind_and_execute(self):
+        """Test that bound policies can be executed."""
+        from pocket_joe import policy, InMemoryRunner
+        
+        @policy.tool(description="Echo policy")
+        async def echo_policy(message: str) -> list[Message]:
+            """Echo the message back"""
+            return [Message(actor="echo", type="text", payload={"content": message})]
+        
+        runner = InMemoryRunner()
+        ctx = BaseContext(runner)
+        
+        # Bind and execute
+        bound = ctx._bind(echo_policy)
+        result = await bound(message="hello")
+        
+        assert len(result) == 1
+        assert result[0].payload["content"] == "hello"
     
     def test_get_policy_success(self):
-        """Test get_policy retrieves the policy class."""
-        class MockPolicy(Policy):
-            async def __call__(self):
-                return []
+        """Test get_policy retrieves the policy function."""
+        from pocket_joe import policy, InMemoryRunner
         
-        class MockRunner:
-            def _bind_strategy(self, policy_class, context):
-                instance = policy_class(context)
-                return instance
+        @policy.tool(description="Test policy")
+        async def test_policy() -> list[Message]:
+            return []
         
-        runner = MockRunner()
+        runner = InMemoryRunner()
         ctx = BaseContext(runner)
         
-        # Bind and attach to context
-        bound = ctx._bind(MockPolicy)
-        ctx.test_policy = bound
+        # Bind the policy
+        ctx._bind(test_policy)
         
-        # Retrieve the policy class
-        policy_class = ctx.get_policy('test_policy')
-        assert policy_class is MockPolicy
+        # Retrieve the policy function by name
+        retrieved = ctx.get_policy('test_policy')
+        assert retrieved is test_policy
     
     def test_get_policy_not_found(self):
-        """Test get_policy raises AttributeError if policy doesn't exist."""
-        class MockRunner:
-            pass
+        """Test get_policy raises ValueError if policy doesn't exist."""
+        from pocket_joe import InMemoryRunner
         
-        runner = MockRunner()
+        runner = InMemoryRunner()
         ctx = BaseContext(runner)
         
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValueError, match="Bound policy not found"):
             ctx.get_policy('nonexistent')
     
-    def test_get_policy_no_class_stored(self):
-        """Test get_policy raises ValueError if __policy_class__ not found."""
-        class MockRunner:
-            pass
+    def test_bind_duplicate_name(self):
+        """Test that binding a policy with duplicate name raises ValueError."""
+        from pocket_joe import policy, InMemoryRunner
         
-        runner = MockRunner()
+        @policy.tool(description="First policy")
+        async def duplicate_name() -> list[Message]:
+            return []
+        
+        @policy.tool(description="Second policy", name="duplicate_name")
+        async def another_policy() -> list[Message]:
+            return []
+        
+        runner = InMemoryRunner()
         ctx = BaseContext(runner)
         
-        # Manually attach something without __policy_class__
-        ctx.fake = lambda: None
+        # First bind should succeed
+        ctx._bind(duplicate_name)
         
-        with pytest.raises(ValueError, match="Policy class not found"):
-            ctx.get_policy('fake')
+        # Second bind with same name should fail
+        with pytest.raises(ValueError, match="Duplicate policy name"):
+            ctx._bind(another_policy)

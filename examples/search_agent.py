@@ -1,61 +1,67 @@
 import asyncio
 from pocket_joe import (
     Message, 
-    policy_spec_mcp_resource, policy_spec_mcp_tool,
+    policy,
     BaseContext, 
-    InMemoryRunner, 
-    Policy,
+    InMemoryRunner,
+    OptionSchema,
     )
-from examples.utils import OpenAILLMPolicy_v1, WebSeatchDdgsPolicy
+from examples.utils import openai_llm_policy_v1, web_seatch_ddgs_policy
 
 # --- Tools ---
-@policy_spec_mcp_tool(description="Orchestrator with LLM and search")
-class SearchAgent(Policy):
-    async def __call__(
-        self,
-        prompt: str,
-        max_iterations: int = 3,
-    ) -> list[Message]:
-        """
-        Orchestrator that gives the LLM access to web search.
-        :param prompt: The user prompt to process
-        :param max_iterations: Maximum number of iterations to run
-        """
+@policy.tool(description="Orchestrates LLM with web search tool")
+async def search_agent(
+    prompt: str,
+    max_iterations: int = 3,
+) -> list[Message]:
+    """
+    Orchestrator that gives the LLM access to web search.
 
-        system_message = Message(
-            actor="system",
-            type="text",
-            payload={"content": "You are an AI assistant that can use tools to help answer user questions."}
-        )
-        prompt_message = Message(
-            actor="user",
-            type="text",
-            payload={"content": prompt}
-        )
+    Args:
+        prompt: The user prompt to process
+        max_iterations: Maximum number of iterations to run
 
-        ctx = AppContext.get_ctx()
-        history = [system_message, prompt_message]
+    Returns:
+        List of Messages containing the conversation history with search results and final answer
+    """
 
-        iteration = 0
-        while iteration < max_iterations:
-            iteration += 1
-            print(f"\n--- Search Agent Iteration {iteration} ---")
-            selected_actions = await ctx.llm(observations=history, options=["web_search"])
-            history.extend(selected_actions)
-            # stop of no tools called
-            if not any(msg.type == "action_call" for msg in selected_actions):
-                break
-    
-        return history
+    system_message = Message(
+        actor="system",
+        type="text",
+        payload={"content": "You are an AI assistant that can use tools to help answer user questions."}
+    )
+    prompt_message = Message(
+        actor="user",
+        type="text",
+        payload={"content": prompt}
+    )
+
+    ctx = AppContext.get_ctx()
+    history = [system_message, prompt_message]
+
+    iteration = 0
+    while iteration < max_iterations:
+        iteration += 1
+        print(f"\n--- Search Agent Iteration {iteration} ---")
+        selected_actions = await ctx.llm(
+            observations=history, 
+            options=OptionSchema.from_func([ctx.web_search])
+            )
+        history.extend(selected_actions)
+        # stop if no tools called
+        if not any(msg.type == "action_call" for msg in selected_actions):
+            break
+
+    return history
 
 # --- App Context ---
 class AppContext(BaseContext):
 
     def __init__(self, runner):
         super().__init__(runner)
-        self.llm = self._bind(OpenAILLMPolicy_v1)
-        self.web_search = self._bind(WebSeatchDdgsPolicy)
-        self.search_agent = self._bind(SearchAgent)
+        self.llm = self._bind(openai_llm_policy_v1)
+        self.web_search = self._bind(web_seatch_ddgs_policy)
+        self.search_agent = self._bind(search_agent)
 
 # --- Main Execution ---
 
