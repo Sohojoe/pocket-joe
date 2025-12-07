@@ -1,5 +1,6 @@
 import asyncio
-from typing import Callable, Any
+from typing import Any
+from collections.abc import Callable
 from .core import Message, BaseContext
 
 

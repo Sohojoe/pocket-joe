@@ -6,7 +6,8 @@ Users should copy and customize these for their needs.
 Requirements: openai, anthropic
 """
 import json
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 import uuid
 
 from pocket_joe import Message, policy

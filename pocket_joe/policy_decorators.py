@@ -167,5 +167,3 @@ class PolicyDecorators:
 
 # Create singleton instance for import
 policy = PolicyDecorators()
-
-__all__ = ['policy', 'PolicyDecorators']
