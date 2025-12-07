@@ -127,13 +127,8 @@ async def openai_llm_policy_v1(observations: list[Message], options: list[Option
         List of Messages containing text responses and/or action_call messages for tools
     """
 
-    # 1. Map Ledger to LLM Messages
     messages = observations_to_completions_messages(observations)
-
-    # 2. Map Allowed Actions to Tools
     tools = options_to_completions_tools(options)
-
-    # 3. Call LLM TODO: add retry logic etc
     openai = AsyncOpenAI()
     response = await openai.chat.completions.create(
         model="gpt-4",
@@ -141,7 +136,6 @@ async def openai_llm_policy_v1(observations: list[Message], options: list[Option
         tools=tools  # type: ignore
     )
     
-    # 4. Map Response to Messages
     new_messages = completions_response_to_messages(response)
             
     return new_messages
