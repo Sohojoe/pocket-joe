@@ -3,7 +3,7 @@
 Usage:
     from pocket_joe import policy
 
-    @policy.tool("description":"A tool that performs web search")
+    @policy.tool(description="A tool that performs web search")
     async def web_search(query: str) -> list[Message]:
         ...
 
@@ -29,39 +29,8 @@ from fastmcp.utilities.types import (
     replace_type,
 )
 ToolResultSerializerType: TypeAlias = Callable[[Any], str]
-from pydantic import BaseModel, ConfigDict
 
-class OptionSchema(BaseModel):
-    """Schema for a tool that can be called"""
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    description: str | None
-    parameters: dict[str, Any]
-    
-    def __hash__(self) -> int:
-        """Hash based on JSON serialization of the model"""
-        return hash(self.model_dump_json())
-    
-    @classmethod
-    def from_func(cls, functions: list[Callable]) -> list['OptionSchema']:
-        """Extract schema from bound function"""
-        options = []
-        for func in functions:
-            policy_func = getattr(func, '__policy_func__', func)
-            option_schema = getattr(policy_func, '_option_schema', None)
-            if not option_schema:
-                raise ValueError(f"Function missing @policy.tool _option_schema metadata")
-            options.append(option_schema)
-        return options
-    
-    @classmethod
-    def from_func_single(cls, function: Callable) -> 'OptionSchema':
-        options = cls.from_func([function])
-        if len(options) != 1:
-            raise ValueError(f"Expected single option, got {len(options)}")
-        return options[0]
-    
+from pocket_joe.core import OptionSchema
 
 
 class PolicyDecorators:
@@ -199,4 +168,4 @@ class PolicyDecorators:
 # Create singleton instance for import
 policy = PolicyDecorators()
 
-__all__ = ['policy', 'PolicyDecorators', 'OptionSchema']
+__all__ = ['policy', 'PolicyDecorators']

@@ -1,7 +1,6 @@
 import asyncio
 from typing import Callable, Any
 from .core import Message, BaseContext
-from dataclasses import replace
 
 
 async def _call_options_in_parallel(ctx: BaseContext, messages: list[Message]) -> list[Message]:
@@ -37,10 +36,10 @@ async def _call_options_in_parallel(ctx: BaseContext, messages: list[Message]) -
                     f"got {type(msg).__name__}: {msg}"
                 )
             if option.type == "action_call":
-                msg = replace(msg,
-                              type = "action_result", # ensure type is action_result
-                              tool_id=option.tool_id  # Propagate tool_id to action_result
-                              )  
+                msg = msg.model_copy(update={
+                    "type": "action_result",  # ensure type is action_result
+                    "tool_id": option.tool_id  # Propagate tool_id to action_result
+                })
             final_actions.append(msg)
 
         return final_actions

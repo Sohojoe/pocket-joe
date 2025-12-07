@@ -1,6 +1,6 @@
-from .core import Message, BaseContext
+from .core import Message, BaseContext, OptionSchema
 from .memory_runtime import InMemoryRunner
-from .policy import policy, OptionSchema
+from .policy_decorators import policy
 
 __all__ = [
     "Message",

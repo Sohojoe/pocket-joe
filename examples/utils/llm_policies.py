@@ -10,7 +10,7 @@ from typing import Any, Callable
 import uuid
 
 from pocket_joe import Message, policy
-from pocket_joe.policy import OptionSchema
+from pocket_joe import OptionSchema
 from openai import AsyncOpenAI
 
 from pocket_joe import BaseContext

@@ -1,7 +1,6 @@
 """Tests for pocket_joe.core module."""
 
 import pytest
-from dataclasses import replace
 from pocket_joe.core import Message, BaseContext
 
 
@@ -41,9 +40,9 @@ class TestMessage:
             msg.actor = "assistant"
     
     def test_message_replace(self):
-        """Test that replace() works for creating modified copies."""
+        """Test that model_copy() works for creating modified copies."""
         msg1 = Message(actor="user", type="text", payload={"content": "hello"})
-        msg2 = replace(msg1, payload={"content": "goodbye"})
+        msg2 = msg1.model_copy(update={"payload": {"content": "goodbye"}})
         
         assert msg1.payload == {"content": "hello"}
         assert msg2.payload == {"content": "goodbye"}

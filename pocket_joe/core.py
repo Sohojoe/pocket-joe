@@ -1,9 +1,7 @@
-from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable, Protocol, TYPE_CHECKING, ClassVar, TypeVar
 from collections.abc import Iterable
 from contextvars import ContextVar
-
-from pocket_joe.policy import OptionSchema
+from pydantic import BaseModel, ConfigDict
 
 T = TypeVar('T', bound='BaseContext')
 F = TypeVar('F', bound=Callable[..., Awaitable[list['Message']]])
@@ -11,13 +9,56 @@ F = TypeVar('F', bound=Callable[..., Awaitable[list['Message']]])
 # from pocket_joe.context import BaseContext
 
 
-@dataclass(frozen=True)
-class Message:
+class Message(BaseModel):
+    """Immutable message structure for agent communication.
+    
+    Messages flow through the agent system carrying information between
+    actors (user, assistant, tools). Each message has a type indicating
+    its purpose (text, action_call, action_result, etc.).
+    """
+    model_config = ConfigDict(frozen=True)
+    
     actor: str                 # e.g. "user", "assistant", "get_weather"
     type: str                  # e.g. "text", "action_call", "action_result"
     payload: dict[str, Any]    # JSON-serializable data
     tool_id: str | None = None  # Optional tool identifier
     id: str = ""               # Unique identifier (engine-generated)
+
+
+class OptionSchema(BaseModel):
+    """Schema for a tool that can be called.
+    
+    This captures the function signature metadata needed to expose
+    tools to LLMs or other agents.
+    """
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    description: str | None
+    parameters: dict[str, Any]
+    
+    def __hash__(self) -> int:
+        """Hash based on JSON serialization of the model"""
+        return hash(self.model_dump_json())
+    
+    @classmethod
+    def from_func(cls, functions: list[Callable]) -> list['OptionSchema']:
+        """Extract schema from bound function"""
+        options = []
+        for func in functions:
+            policy_func = getattr(func, '__policy_func__', func)
+            option_schema = getattr(policy_func, '_option_schema', None)
+            if not option_schema:
+                raise ValueError(f"Function missing @policy.tool _option_schema metadata")
+            options.append(option_schema)
+        return options
+    
+    @classmethod
+    def from_func_single(cls, function: Callable) -> 'OptionSchema':
+        options = cls.from_func([function])
+        if len(options) != 1:
+            raise ValueError(f"Expected single option, got {len(options)}")
+        return options[0]
 
 class BaseContext:
     """Framework base - hide plumbing here.
