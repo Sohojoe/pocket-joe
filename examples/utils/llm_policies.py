@@ -7,17 +7,26 @@ Requirements: openai, anthropic
 """
 import json
 from typing import Any
+from collections.abc import Callable
 import uuid
 
-from pocket_joe import Message, policy_spec_mcp_tool
+from pocket_joe import Message, policy
+from pocket_joe import OptionSchema
 from openai import AsyncOpenAI
 
 from pocket_joe import BaseContext
-from pocket_joe.core import Policy
-from pocket_joe.policy_spec_mcp import get_policy_spec 
 
 
-def ledger_to_llm_messages(in_msgs: list[Message]) -> list[dict[str, Any]]:
+def observations_to_completions_messages(in_msgs: list[Message]) -> list[dict[str, Any]]:
+    """Convert pocket-joe Message list to chat completions API message format.
+    
+    Args:
+        in_msgs: List of Messages from the conversation history
+        
+    Returns:
+        List of dicts in chat completions format with roles and content
+    """
+
     
     tool_results = dict[str, Message]()
     for msg in in_msgs:
@@ -52,27 +61,35 @@ def ledger_to_llm_messages(in_msgs: list[Message]) -> list[dict[str, Any]]:
             })
     return messages
 
-def actions_to_tools(ctx: BaseContext, options: list[str] | None) -> list[dict]:
-    """Convert policy names to OpenAI tool schemas using registry metadata."""
+def options_to_completions_tools(options: list[OptionSchema] | None) -> list[dict]:
+    """Convert OptionSchema list to chat completions tool format.
+    
+    Args:
+        options: List of OptionSchema objects containing tool metadata
+        
+    Returns:
+        List of tool dicts in chat completions format: {type: "function", function: {...}}
+    """
     tools = []
     if not options:
         return tools
-    for name in options:
-        policy_class = ctx.get_policy(name)
-        if not policy_class:
-            raise ValueError(f"Policy '{name}' not found in context. Check binding.")
-        meta = get_policy_spec(policy_class)
+    for option in options:
+        # openAI mapping
         tools.append({
             "type": "function",
-            "function": {
-                "name": name,
-                "description": meta.description,
-                "parameters": meta.input_schema
-            }
+            "function": option.model_dump()
         })
     return tools
 
-def map_response_to_messagess(response: Any) -> list[Message]:
+def completions_response_to_messages(response: Any) -> list[Message]:
+    """Convert chat completions API response to pocket-joe Messages.
+    
+    Args:
+        response: ChatCompletion response object from OpenAI API
+        
+    Returns:
+        List of Messages containing text responses and/or action_call messages
+    """
     new_messages = []
     msg = response.choices[0].message
     
@@ -99,29 +116,26 @@ def map_response_to_messagess(response: Any) -> list[Message]:
             
     return new_messages
 
-@policy_spec_mcp_tool(description="Calls OpenAI GPT-4 with tool support")
-class OpenAILLMPolicy_v1(Policy):
-    async def __call__(self, observations: list[Message], options: list[str]) -> list[Message]:
-        """LLM policy that calls OpenAI GPT-4 with tool support.
-        :param observations: List of Messages representing the conversation history + new input
-        :param options: Set of allowed options the LLM can call (policy names that will map to tools)
-        """
+@policy.tool(description="Calls LLM with tool support")
+async def openai_llm_policy_v1(observations: list[Message], options: list[OptionSchema]) -> list[Message]:
+    """LLM policy that calls OpenAI GPT-4 with tool support.
 
-        # 1. Map Ledger to LLM Messages
-        messages = ledger_to_llm_messages(observations)
+    Args:
+        observations: List of Messages representing the conversation history + new input
+        options: Set of allowed options the LLM can call
+    Returns:
+        List of Messages containing text responses and/or action_call messages for tools
+    """
 
-        # 2. Map Allowed Actions to Tools
-        tools = actions_to_tools(self.ctx, options)
-
-        # 3. Call LLM TODO: add retry logic etc
-        openai = AsyncOpenAI()
-        response = await openai.chat.completions.create(
-            model="gpt-4",
-            messages=messages,  # type: ignore
-            tools=tools  # type: ignore
-        )
-        
-        # 4. Map Response to Messages
-        new_messages = map_response_to_messagess(response)
-                
-        return new_messages
+    messages = observations_to_completions_messages(observations)
+    tools = options_to_completions_tools(options)
+    openai = AsyncOpenAI()
+    response = await openai.chat.completions.create(
+        model="gpt-4",
+        messages=messages,  # type: ignore
+        tools=tools  # type: ignore
+    )
+    
+    new_messages = completions_response_to_messages(response)
+            
+    return new_messages

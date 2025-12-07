@@ -5,6 +5,7 @@ description = "A correct, simple, performant, and pythonic framework for buildin
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastmcp>=2.13.2",
 ]
 
 [project.optional-dependencies]

@@ -10,7 +10,7 @@
 
 An agent system using Reinforcement Learning theory with LLM semantics as first class
 
-- `Policy`: all code/logic/llm are policies
+- `policy`: all code/logic/llm are policies
 - `observations` - the set of observations for the policy to reason over
 - `options` - a set of optional sub policies that the policy can choose
 - `selected_actions` - the set of concurrent actions the policy chose to take
@@ -30,34 +30,34 @@ In LLM APIs, everything is a `Message`. We adopt this as our universal unit:
 An LLM policy that can call other policies:
 
 ```python
-@policy_spec_mcp_tool(description="Calls OpenAI GPT-4 with tool support")
-class OpenAILLMPolicy_v1(Policy):
-    async def __call__(self, observations: list[Message], options: list[str]) -> list[Message]:
-        """LLM policy that calls OpenAI GPT-4 with tool support.
-        :param observations: List of Messages representing the conversation history + new input
-        :param options: Set of allowed options the LLM can call (policy names that will map to tools)
-        """
+@policy.tool(description="Calls LLM with tool support")
+async def openai_llm_policy_v1(observations: list[Message], options: list[OptionSchema]) -> list[Message]:
+    """LLM policy that calls OpenAI GPT-4 with tool support.
+    Args:
+        observations: List of Messages representing the conversation history + new input
+        options: Set of allowed options the LLM can call
+    """
+        openai = AsyncOpenAI()
         response = await openai.chat.completions.create(
             model="gpt-4",
-            messages=to_completions_messages(observations),
-            tools=to_completions_tools(self.ctx, options))
-        return map_response_to_messagess(response)
+            messages=observations_to_completions_messages(observations),
+            tools=options_to_completions_tools(options))
+        return completions_response_to_messages(response)
 ```
 
 A simple heuristic policy:
 
 ```python
-@policy_spec_mcp_tool(description="Performs web search")
-class WebSearchDdgsPolicy(Policy):
-    async def __call__(self, query: str) -> list[Message]:
-        """
-        Performs a web search and returns results.        
-        :param query: The search query string to search for
+@policy.tool(description="Performs a web search and returns results.")
+async def web_seatch_ddgs_policy(query: str,) -> list[Message]:
+        """Performs a web search and returns results.        
+        Args:
+            query: The search query string to search for
         """
         results = DDGS().text(query, max_results=5)
         results_str = "\n\n".join([f"Title: {r['title']}\nURL: {r['href']}\nSnippet: {r['body']}" for r in results])
         return [Message(
-            actor=self.__class__.__name__,
+            actor="web_seatch_ddgs_policy",
             type="action_result",
             payload={"content": results_str}
         )]
@@ -66,26 +66,24 @@ class WebSearchDdgsPolicy(Policy):
 An orchestrator policy that coordinates LLM + search:
 
 ```python
-@policy_spec_mcp_tool(description="Orchestrator with LLM and search")
-class SearchAgent(Policy):
-    ctx: "AppContext"  # Override to specify context type
-    
-    async def __call__(self, prompt: str) -> list[Message]:
+@policy.tool(description="Orchestrates LLM with web search tool")
+async def search_agent(prompt: str) -> list[Message]:
+        """Orchestrator that gives the LLM access to web search.
+        Args:
+            prompt: The user prompt to process
         """
-        Orchestrator that gives the LLM access to web search.
-        :param prompt: The user prompt to process
-        """
-        system_message = Message(actor="system", type="text", 
+        ctx = AppContext.get_ctx()
+        system_message = Message(actor="system", type="text",
             payload={"content": "You are an AI assistant that can use tools to help answer user questions."})
         prompt_message = Message(actor="user", type="text", payload={"content": prompt})
 
         history = [system_message, prompt_message]
         while True:
-            selected_actions = await self.ctx.llm(observations=history, options=["web_search"])
+            selected_actions = await ctx.llm(observations=history, options=OptionSchema.from_func([ctx.web_search]))
             history.extend(selected_actions)
             if not any(msg.type == "action_call" for msg in selected_actions):
                 break
-        
+
         return history
 ```
 
@@ -95,9 +93,9 @@ Use `AppContext` for registry (gives IDE type hints):
 class AppContext(BaseContext):
     def __init__(self, runner):
         super().__init__(runner)
-        self.llm = self._bind(OpenAILLMPolicy_v1)
-        self.web_search = self._bind(WebSearchDdgsPolicy)
-        self.search_agent = self._bind(SearchAgent)
+        self.llm = self._bind(openai_llm_policy_v1)
+        self.web_search = self._bind(web_seatch_ddgs_policy)
+        self.search_agent = self._bind(search_agent)
 ```
 
 Enjoy:
@@ -179,7 +177,7 @@ uv run python examples/youtube_summarizer.py
 
 Still in prerelease, things will change
 
-Intial version
+Initial version
 
 - [] Tidy up code - add partly refactored code
 - [] Proper tests
@@ -189,7 +187,7 @@ Durable System:
 
 - [] Ledger - Temporal style 'at least once, only one result' replay semantic
 - [] Durable Storage wrapper - For long running tasks & replay
-- [] Distrubuted - worker model
+- [] Distributed - worker model
 
 ## Background
 
