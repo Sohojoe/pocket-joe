@@ -1,762 +1,304 @@
-# Migration Plan: Function-Based Policies with FastMCP Integration
+# Refactor Messages
 
 ## Overview
 
-Migrate pocket-joe from class-based policies to function-based policies with FastMCP compatibility. This enables better IDE support, explicit MCP exposure control, and compatibility with FastMCP's schema extraction.
+I need messages to support images / media, so now is a good time to refactor the message layer.
 
-## Design Goals
+This refactor is **not just about media** — it’s about cleaning up conceptual leaks that are already showing up as the framework grows (options, durability, multiple policies, etc).
 
-1. **Function-based policies** with `@policy` decorator (FastMCP compatible)
-2. **Tool.from_function()** for schema extraction WITHOUT MCP registration
-3. **Follow MCP patterns**: `policy_spec_mcp_tool` and `policy_spec_mcp_resource` wrappers
-4. **Explicit MCP exposure**: via `expose_to_mcp()` helper
-5. **Per-subclass context singleton**: Each AppContext subclass has its own ContextVar
-6. **IDE support**: Developers get autocomplete for `ctx.agent_x()`
+### Current pain points
 
-## Architecture Changes
+- `actor` is overloaded and confusing:
+  - sometimes means *which policy created the message*
+  - sometimes is abused as *LLM role* (`user`, `assistant`, etc.)
+- `action_call` / `action_result` names leak provider terminology
+- payloads are untyped `dict[str, Any]`, but the code already assumes hidden schemas
+- no clean way to interleave text + media
+- upcoming durability / replay work will make implicit assumptions explode
 
-### Current (Class-Based)
+---
+
+## Design principles
+
+1. **Framework semantics first**
+
+   - Policies choose options
+   - Options produce results
+   - Messages are observations/actions/events
+
+2. **Provider semantics are adapter concerns**
+
+   - OpenAI / Gemini roles, tool-call pairing rules, etc. do *not* leak into core types
+
+3. **Strong typing over conventions**
+
+   - Use Pydantic discriminated unions
+   - Eliminate "stringly-typed" payload assumptions
+
+4. **Media is URL-based and modality-aware**
+
+   - Do not require exact MIME
+   - Distinguish image vs audio vs video vs document
+
+---
+
+## Proposed Message shape (conceptual)
+
+A `Message` is still the atomic, immutable unit flowing through the system.
+
+### Replace `actor`
+
+Replace `actor` with two explicit concepts:
+
+- `policy: str`
+  - Which policy created the message
+  - For `option_call`: the *caller* policy (the decider)
+  - For `option_result`: the *invoked* policy (the option that ran)
+  - Reserve a policy name like `"runtime"` / `"executor"` for executor-generated errors/results when appropriate
+
+- `role_hint_for_llm: Optional[Literal["user","assistant","tool","system"]]`
+  - **Hint only** for provider adapters
+  - Never used by the core framework for semantics
+
+---
+
+## Rename message kinds
+
+Rename provider-leaky terminology:
+
+- `action_call`   → `option_call`
+- `action_result` → `option_result`
+
+Rationale:
+
+- "option" matches the options framework
+- "tool" is provider jargon
+- keeps POMDP framing clean
+
+---
+
+## Message kinds (top-level)
+
+Keep **exactly three** top-level kinds:
+
+1. `parts`
+
+   - natural language + media
+   - observations or prompts
+
+2. `option_call`
+
+   - a policy-selected action
+   - contains option name + arguments
+
+3. `option_result`
+
+   - result of executing an option
+   - success or error
+
+Adapters may project these into provider-specific structures. For OpenAI specifically, adapters should serialize only complete `option_call`+`option_result` pairs (same invocation_id) and skip incomplete calls.
+
+---
+
+## Parts model (strongly typed)
+
+### TextPart
+
 ```python
-class OpenAILLMPolicy_v1(Policy):
-    async def __call__(self, observations, options=None):
-        # Implementation
-        pass
-
-class AppContext(BaseContext):
-    def __init__(self, runner):
-        super().__init__(runner)
-        self.llm = self._bind(OpenAILLMPolicy_v1)
+class TextPart(BaseModel):
+    kind: Literal["text"] = "text"
+    text: str
 ```
 
-### Target (Function-Based)
+### MediaPart
+
+Media is **URL-only**.
+
 ```python
-@policy_spec_mcp_tool(description="LLM with tool support")
-async def llm(observations: list[Message], options: list[str] | None = None) -> list[Message]:
-    ctx = AppContext.get_ctx()
-    # Implementation
-    pass
+class MediaPart(BaseModel):
+    kind: Literal["media"] = "media"
 
-class AppContext(BaseContext):
-    def __init__(self, runner):
-        super().__init__(runner)
-        self.llm = self._bind(llm)  # Binds function, not class
+    modality: Literal[
+        "image",
+        "audio",
+        "video",
+        "document",
+    ]
+
+    url: HttpUrl
+
+    # optional metadata
+    mime: Optional[str] = None
+
+    # prompt sugar only (labels, descriptions)
+    prompt_hint: Optional[str] = None
+
+    # internal correlation / replay aid
+    id: Optional[str] = None
 ```
 
-### Key Technical Components
+Notes:
 
-#### 1. ContextVar-Based Context Management
+- `modality` is required and semantic
+- `mime` is optional, best-effort metadata
+- `prompt_hint` is *explicitly* non-semantic
+
+---
+
+## Step grouping
+
+Add:
+
 ```python
-from contextvars import ContextVar
-from typing import ClassVar
-
-class BaseContext:
-    _ctx_var: ClassVar[ContextVar['BaseContext']] = None
-
-    def __init_subclass__(cls):
-        """Create a separate ContextVar for each subclass"""
-        super().__init_subclass__()
-        cls._ctx_var = ContextVar(f'{cls.__module__}.{cls.__name__}_context')
-
-    def __init__(self, runner):
-        if self._ctx_var is None:
-            # For BaseContext itself (if instantiated directly)
-            self.__class__._ctx_var = ContextVar(f'{self.__class__.__module__}.{self.__class__.__name__}_context')
-
-        self.runner = runner
-        self._registry = {}
-        runner._registry = self._registry
-        runner._context = self
-
-        # Set context once during initialization
-        self._ctx_var.set(self)
-
-    @classmethod
-    def get_ctx(cls) -> 'BaseContext':
-        """Get the current context from contextvar"""
-        if cls._ctx_var is None:
-            raise RuntimeError(f"{cls.__name__} context not initialized")
-        return cls._ctx_var.get()
+step_num: Optional[int]
 ```
 
-#### 2. Tool Metadata Extraction
+Semantics:
+
+- Groups messages produced in the same logical timestep / decision cycle
+- Orthogonal to tracing and durability ledger
+- The ordering of events is preserved by the ledger / replay system (deterministic replay)
+- Builder supports both:
+  - `next_step(...)` (advance step_num)
+  - `continue_step(...)` (append more messages/parts within the current step)
+
+Used for:
+- collapsing events into transitions
+- debugging / visualization
+
+---
+
+## Option payloads (strongly typed)
+
+### OptionCall
+
 ```python
-from fastmcp.tools import Tool
-
-def policy(description: str | None = None):
-    def decorator(func):
-        tool = Tool.from_function(func, description=description)
-        func._tool_metadata = tool
-        return func
-    return decorator
+class OptionCallPayload(BaseModel):
+    kind: Literal["option_call"] = "option_call"
+    invocation_id: str  # unique per call (pairs call ↔ result)
+    option_name: str
+    arguments: dict[str, Any]
 ```
 
-#### 3. PolicyProxy for Call Routing
+### OptionResult
+
 ```python
-class PolicyProxy:
-    def __init__(self, func, name, runner, tool_metadata=None):
-        self.func = func
-        self.name = name
-        self.runner = runner
-        self.tool_metadata = tool_metadata
-        # Preserve metadata for IDE
-        self.__name__ = func.__name__
-        self.__doc__ = func.__doc__
+class OptionResultPayload(BaseModel):
+    kind: Literal["option_result"] = "option_result"
+    invocation_id: str  # must match the corresponding option_call
+    option_name: str
+    result: Any
+    is_error: bool = False
 
-    async def __call__(self, **kwargs):
-        return await self.runner.execute(self.name, kwargs)
+    # minimal structured error (used when is_error=True)
+    error_type: Optional[str] = None
+    error_message: Optional[str] = None
+    retryable: Optional[bool] = None
 ```
 
-#### 4. Runner Execution
+Notes:
+
+- Validation of `arguments` is deferred (future work)
+- If arguments fail validation later, the executor/runtime returns:
+  - `option_result(is_error=True, error_type=..., error_message=..., retryable=...)`
+  - and does **not** invoke the target option/policy
+
+---
+
+## MessageBuilder
+
+Introduce a **MessageBuilder** for ergonomic construction.
+
+Goals:
+
+- eliminate boilerplate
+- enforce ordering and consistency
+- optionally anchor to previous message / step
+
+### Builder variants (recommended)
+
+- `MessageBuilder.next_step(last_message_or_step)`
+  - creates a builder for the next step (increments step_num)
+
+- `MessageBuilder.continue_step(last_message_or_step)`
+  - creates a builder that appends within the current step (keeps step_num)
+
+- `OptionResultBuilder.response_to(option_call_message)`
+  - constrained builder for producing an `option_result`
+  - automatically copies `invocation_id`, `option_name`, and `step_num`
+  - provides:
+    - `success(result)`
+    - `error(error_type, error_message, retryable=False)`
+  - throws if you attempt to set a mismatched invocation_id / option_name
+
+### Example usage
+
 ```python
-class InMemoryRunner:
-    async def execute(self, policy_name: str, kwargs: dict):
-        """Execute policy - context already set during initialization"""
-        func = self._registry[policy_name]
-        # Apply wrappers and execute
-        wrapped = invoke_options_wrapper_for_func(func, self._context)
-        return await wrapped(**kwargs)
+builder = MessageBuilder.continue_step(last_message)
+
+builder.add_option_call("search_web", {"query": "hobbit movie"})
+# ... executor runs it ...
+result_builder = OptionResultBuilder.response_to(builder.last_option_call)
+option_result_msg = result_builder.success(results)
+
+builder.add_image(
+    "girl wearing a hat",
+    url_1,
+)
+
+builder.add_image(
+    "fancy dress",
+    url_2,
+)
+
+builder.add_text(
+    "Take the dress from the second image and apply it to the person in the first image"
+)
+
+message = builder.to_message()
 ```
 
-## Implementation Plan
+### Builder responsibilities
 
-### Phase 1: Core Infrastructure
+- Maintain `step_num`
+- Generate a unique `invocation_id` for each `option_call`
+- Ensure `option_call` ↔ `option_result` pairing consistency via `invocation_id`
+- Assign stable internal media ids (optional)
+- Provide a predictable policy/role_hint defaulting strategy
+- Produce a single `parts` message (keep builders simple; if you ever need multiple messages, use multiple builders or emit messages directly)
 
-#### ✅ Task 1: Implement ContextVar-based BaseContext (COMPLETED)
-**File**: `pocket_joe/core.py:36-66`
+---
 
-- Add `_ctx_var: ClassVar[ContextVar]` class variable (per-subclass)
-- Implement `__init_subclass__()` to create ContextVar for each subclass
-- Implement `get_ctx()` classmethod
-- Update `__init__` to set context once during initialization
-- Link runner ↔ context
+## Adapter responsibilities (explicitly *out of scope* here)
 
-**Changes**:
-```python
-from contextvars import ContextVar
-from typing import ClassVar
+Adapters (OpenAI, Gemini, etc.) are responsible for:
 
-class BaseContext:
-    _ctx_var: ClassVar[ContextVar['BaseContext']] = None
+- mapping `role_hint_for_llm` → provider roles
+- rendering `parts` into provider-specific content/parts arrays
+- inserting prompt sugar labels ("Media 1:", etc.) if desired
+- pairing `option_call` + `option_result` according to provider rules
+- skipping incomplete option calls
 
-    def __init_subclass__(cls):
-        """Create a separate ContextVar for each subclass"""
-        super().__init_subclass__()
-        cls._ctx_var = ContextVar(f'{cls.__module__}.{cls.__name__}_context')
+---
 
-    def __init__(self, runner):
-        if self._ctx_var is None:
-            # For BaseContext itself (if instantiated directly)
-            self.__class__._ctx_var = ContextVar(f'{self.__class__.__module__}.{self.__class__.__name__}_context')
+## Non-goals (for this refactor)
 
-        self.runner = runner
-        self._registry = {}
-        runner._registry = self._registry
-        runner._context = self
+- schema validation of option arguments
+- durability / ledger implementation
+- provider-specific tuning knobs (e.g., OpenAI image detail)
+- parallel tool-call orchestration rules
 
-        # Set context once during initialization
-        self._ctx_var.set(self)
+These will be layered on later.
 
-    @classmethod
-    def get_ctx(cls) -> 'BaseContext':
-        """Get the current context from contextvar"""
-        if cls._ctx_var is None:
-            raise RuntimeError(f"{cls.__name__} context not initialized")
-        return cls._ctx_var.get()
-```
+---
 
-#### ✅ Task 2: Create policy.tool and policy.resource Decorators (COMPLETED)
-**File**: `pocket_joe/policy.py` (new)
+## Outcome
 
-**Completed implementation:**
-- Created `PolicyDecorators` class with `.tool()` and `.resource()` methods
-- Uses FastMCP's `Tool.from_function()` and `Resource.from_function()`
-- Stores FastMCP metadata objects on functions
-- Preserves original function (no wrapping)
-- Exported as singleton `policy` for `@policy.tool` and `@policy.resource` usage
-- Full test coverage in `tests/test_policy.py` (12 tests passing)
+After this refactor:
 
-**Files created:**
-- `pocket_joe/policy.py` - Policy decorator implementation
-- `tests/test_policy.py` - Comprehensive test suite
+- Message semantics are clean, explicit, and strongly typed
+- Media support is first-class and extensible
+- Provider quirks are isolated to adapters
+- The framework remains aligned with POMDP / options thinking
+- Future durability work won’t require undoing this layer
 
-**Dependencies added:**
-- `fastmcp>=2.13.2` added to `pyproject.toml`
-
-#### Task 3: Create policy_spec_mcp_tool and policy_spec_mcp_resource Wrappers
-**File**: `pocket_joe/policy_spec_mcp.py` (update)
-
-**Status**: Skipped - replaced by Task 2's `@policy.tool` and `@policy.resource` pattern which provides cleaner API matching FastMCP's `@mcp.tool` / `@mcp.resource` pattern.
-
-#### Task 4: Create PolicyProxy Class
-**File**: `pocket_joe/policy_proxy.py` (new)
-
-- Route calls through runner
-- Preserve function metadata for IDE support
-- Store Tool metadata for MCP exposure
-
-**Implementation**:
-```python
-import inspect
-from typing import Callable, Any
-from fastmcp.tools import Tool
-from .core import Message
-
-class PolicyProxy:
-    """Proxy that routes policy calls through runner while preserving metadata"""
-
-    def __init__(self, func: Callable, name: str, runner: Any, tool_metadata: Tool | None = None):
-        self.func = func
-        self.name = name
-        self.runner = runner
-        self.tool_metadata = tool_metadata
-
-        # Preserve metadata for IDE support
-        self.__name__ = func.__name__
-        self.__doc__ = func.__doc__
-        self.__signature__ = inspect.signature(func)
-
-        # Preserve Tool metadata
-        if tool_metadata:
-            self._tool_name = tool_metadata.name
-            self._tool_description = tool_metadata.description
-            self._tool_schema = tool_metadata.input_schema
-
-    async def __call__(self, **kwargs) -> list[Message]:
-        """Route call through runner"""
-        return await self.runner.execute(self.name, kwargs)
-```
-
-#### Task 5: Update _bind() Method
-**File**: `pocket_joe/core.py:41-47`
-
-- Accept functions instead of classes
-- Extract Tool metadata from decorated functions
-- Return PolicyProxy instance
-
-**Changes**:
-```python
-from .policy_proxy import PolicyProxy
-
-class BaseContext:
-    def _bind(self, func: Callable):
-        """Bind a policy function with FastMCP metadata"""
-        name = func.__name__
-        self._registry[name] = func
-
-        # Extract FastMCP-generated metadata
-        tool_metadata = getattr(func, '_tool_metadata', None)
-
-        return PolicyProxy(func, name, self.runner, tool_metadata)
-
-    # Remove old get_policy() method or update for function-based
-```
-
-#### Task 6: Update InMemoryRunner
-**File**: `pocket_joe/memory_runtime.py:84-93`
-
-- Remove or update `_bind_strategy()` (now handled by PolicyProxy)
-- Add `execute()` method
-- Integrate with `invoke_options_wrapper`
-- Context is already set during BaseContext.__init__, no need to set/reset
-
-**Changes**:
-```python
-class InMemoryRunner:
-    async def execute(self, policy_name: str, kwargs: dict) -> list[Message]:
-        """Execute policy - context already set during initialization"""
-        func = self._registry[policy_name]
-
-        # Apply wrappers and execute
-        wrapped = invoke_options_wrapper_for_func(func, self._context)
-        result = await wrapped(**kwargs)
-        return result
-```
-
-#### Task 7: Update invoke_options_wrapper for Functions
-**File**: `pocket_joe/policy_wrappers.py:65-71`
-
-- Create function-compatible wrapper
-- Replace or augment existing class-based wrapper
-
-**Changes**:
-```python
-def invoke_options_wrapper_for_func(func: Callable, ctx: BaseContext):
-    """Wrapper for function-based policies"""
-    async def wrapped(**kwargs):
-        selected_actions = await func(**kwargs)
-        option_results = await _call_options_in_parallel(ctx, selected_actions)
-        return selected_actions + option_results
-    return wrapped
-```
-
-### Phase 2: Policy Migration (Atomic - All at Once)
-
-⚠️ **CRITICAL**: This phase must be done atomically. Cannot mix class-based and function-based policies.
-
-#### Task 8: Convert ALL Policies to Functions
-
-##### 8.1: OpenAILLMPolicy_v1
-**File**: `examples/utils/llm_policies.py`
-
-**Current**:
-```python
-class OpenAILLMPolicy_v1(Policy):
-    async def __call__(self, observations, options=None):
-        # Implementation
-```
-
-**Target**:
-```python
-@policy_spec_mcp_tool(description="LLM with tool support")
-async def llm(
-    observations: list[Message],
-    options: list[str] | None = None
-) -> list[Message]:
-    ctx = AppContext.get_ctx()
-
-    # Get tools for the specified options
-    tools = get_tools_from_context(ctx, options or [])
-    openai_tools = [mcp_to_openai_tool(tool) for tool in tools]
-
-    response = await openai.chat.completions.create(
-        model="gpt-4",
-        messages=to_completions_messages(observations),
-        tools=openai_tools
-    )
-    return map_response_to_messages(response)
-```
-
-##### 8.2: WebSearchDdgsPolicy
-**File**: `examples/utils/search_web_policies.py`
-
-**Current**:
-```python
-class WebSeatchDdgsPolicy(Policy):
-    async def __call__(self, query: str):
-        # Implementation
-```
-
-**Target**:
-```python
-@policy_spec_mcp_tool(description="Performs web search using DuckDuckGo")
-async def web_search(query: str) -> list[Message]:
-    results = DDGS().text(query, max_results=5)
-    # Implementation
-    return [Message(...)]
-```
-
-##### 8.3: SearchAgent
-**File**: `examples/search_agent.py:13-58`
-
-**Current**:
-```python
-@policy_spec_mcp_tool(description="Orchestrator with LLM and search")
-class SearchAgent(Policy):
-    ctx: "AppContext"
-    async def __call__(self, prompt: str, max_iterations: int = 3):
-        # Implementation
-```
-
-**Target**:
-```python
-@policy_spec_mcp_tool(description="Orchestrator with LLM and search")
-async def search_agent(
-    prompt: str,
-    max_iterations: int = 3
-) -> list[Message]:
-    ctx = AppContext.get_ctx()
-
-    system_message = Message(...)
-    prompt_message = Message(...)
-    history = [system_message, prompt_message]
-
-    iteration = 0
-    while iteration < max_iterations:
-        iteration += 1
-        selected_actions = await ctx.llm(observations=history, options=["web_search"])
-        history.extend(selected_actions)
-        if not any(msg.type == "action_call" for msg in selected_actions):
-            break
-
-    return history
-```
-
-##### 8.4: TranscribeYouTubePolicy
-**File**: `examples/utils/transcribe_youtube_policy.py`
-
-Convert following the same pattern as above.
-
-##### 8.5: Update AppContext Bindings
-**File**: `examples/search_agent.py:51-58`
-
-**Current**:
-```python
-class AppContext(BaseContext):
-    def __init__(self, runner):
-        super().__init__(runner)
-        self.llm = self._bind(OpenAILLMPolicy_v1)
-        self.web_search = self._bind(WebSeatchDdgsPolicy)
-        self.search_agent = self._bind(SearchAgent)
-```
-
-**Target**:
-```python
-class AppContext(BaseContext):
-    def __init__(self, runner):
-        super().__init__(runner)
-        self.llm = self._bind(llm)
-        self.web_search = self._bind(web_search)
-        self.search_agent = self._bind(search_agent)
-```
-
-### Phase 3: MCP Integration Helpers
-
-#### Task 9: Add MCP Conversion Helpers
-**File**: `pocket_joe/mcp_helpers.py` (new)
-
-- Convert MCP Tool schema to OpenAI format
-- Convert MCP Tool schema to Anthropic format
-- Extract tools from context by name
-
-**Implementation**:
-```python
-from fastmcp.tools import Tool
-from .core import BaseContext
-
-def mcp_to_openai_tool(tool: Tool) -> dict:
-    """Convert MCP/FastMCP tool to OpenAI format"""
-    return {
-        "type": "function",
-        "function": {
-            "name": tool.name,
-            "description": tool.description,
-            "parameters": tool.input_schema
-        }
-    }
-
-def mcp_to_anthropic_tool(tool: Tool) -> dict:
-    """Convert MCP/FastMCP tool to Anthropic format"""
-    return {
-        "name": tool.name,
-        "description": tool.description,
-        "input_schema": tool.input_schema
-    }
-
-def get_tools_from_context(ctx: BaseContext, policy_names: list[str]) -> list[Tool]:
-    """Extract Tool objects for given policies"""
-    tools = []
-    for name in policy_names:
-        func = ctx._registry.get(name)
-        if func and hasattr(func, '_tool_metadata'):
-            tools.append(func._tool_metadata)
-    return tools
-```
-
-#### Task 10: Add expose_to_mcp() Helper
-**File**: `pocket_joe/core.py`
-
-- Explicitly expose selected policies to MCP server
-- Use pre-built Tool metadata
-- Follow FastMCP registration patterns
-
-**Changes**:
-```python
-from fastmcp import FastMCP
-
-class BaseContext:
-    def expose_to_mcp(self, mcp: FastMCP, policy_names: list[str]):
-        """Explicitly expose policies to MCP server"""
-        for name in policy_names:
-            func = self._registry[name]
-
-            if hasattr(func, '_tool_metadata'):
-                # Use pre-built Tool metadata
-                tool = func._tool_metadata
-                # Add to MCP's tool manager directly
-                mcp._tool_manager._tools[name] = tool
-            else:
-                # Fallback to standard mcp.tool()
-                mcp.tool(func)
-```
-
-#### Task 11: Update LLM Policy to Use MCP Conversion
-**File**: `examples/utils/llm_policies.py`
-
-- Use `get_tools_from_context()` to get Tool metadata
-- Use `mcp_to_openai_tool()` for conversion
-- Replace manual schema construction
-
-**Changes**: See Task 8.1 implementation
-
-### Phase 4: Examples & Documentation
-
-#### Task 12: Update search_agent.py Example
-**File**: `examples/search_agent.py:60-72`
-
-**Current**:
-```python
-async def main():
-    runner = InMemoryRunner()
-    ctx = AppContext(runner)
-    result = await ctx.search_agent(prompt="What is the latest Python version?")
-```
-
-**Target**: (Minimal changes, mostly works as-is)
-```python
-async def main():
-    print("--- Starting Search Agent Demo ---")
-
-    runner = InMemoryRunner()
-    ctx = AppContext(runner)
-    result = await ctx.search_agent(prompt="What is the latest Python version?")
-
-    print(f"\nFinal Result: {result[-1].payload['content']}")
-    print("--- Demo Complete ---")
-```
-
-#### Task 13: Create MCP Server Example
-**File**: `examples/mcp_server_example.py` (new)
-
-- Demonstrate explicit MCP exposure
-- Show internal vs external policies
-- Document the pattern
-
-**Implementation**:
-```python
-import asyncio
-from fastmcp import FastMCP
-from pocket_joe import BaseContext, InMemoryRunner
-from examples.utils import llm, web_search, search_agent
-
-class AppContext(BaseContext):
-    def __init__(self, runner):
-        super().__init__(runner)
-        self.llm = self._bind(llm)
-        self.web_search = self._bind(web_search)
-        self.search_agent = self._bind(search_agent)
-
-async def main():
-    runner = InMemoryRunner()
-    ctx = AppContext(runner)
-
-    # Setup MCP server
-    mcp = FastMCP(name="pocket-joe")
-
-    # Explicitly expose only external-facing policies
-    ctx.expose_to_mcp(mcp, ["web_search", "search_agent"])
-    # Note: 'llm' is NOT exposed - internal only
-
-    print("MCP server running with exposed tools: web_search, search_agent")
-    mcp.run()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-#### Task 14: Update Tests
-**File**: `tests/test_core.py`
-
-Add test coverage for:
-- `@policy` decorator extracts Tool metadata correctly
-- `PolicyProxy` preserves function signature and metadata
-- `get_ctx()` works in concurrent executions
-- `ContextVar` isolation between different contexts
-- MCP conversion helpers produce correct schemas
-- `expose_to_mcp()` registers tools correctly
-
-**Test Examples**:
-```python
-async def test_policy_decorator_extracts_metadata():
-    @policy(description="Test policy")
-    async def test_func(arg: str) -> list[Message]:
-        return []
-
-    assert hasattr(test_func, '_tool_metadata')
-    assert test_func._tool_name == "test_func"
-    assert test_func._tool_description == "Test policy"
-
-async def test_context_isolation():
-    runner1 = InMemoryRunner()
-    ctx1 = AppContext(runner1)
-
-    runner2 = InMemoryRunner()
-    ctx2 = AppContext(runner2)
-
-    # Test that contexts don't interfere
-    # ...
-```
-
-#### Task 15: Cleanup & Documentation
-**Files**: Multiple
-
-##### 15.1: Clean up context.py
-**File**: `pocket_joe/context.py`
-- Remove all commented-out code
-- Remove old class-based patterns
-- Keep only if needed for backwards compatibility
-
-##### 15.2: Update __init__.py Exports
-**File**: `pocket_joe/__init__.py`
-- Export new decorators
-- Export MCP helpers
-- Export PolicyProxy if needed
-
-**Changes**:
-```python
-from .core import Message, BaseContext
-from .decorators import policy
-from .policy_spec_mcp import policy_spec_mcp_tool, policy_spec_mcp_resource
-from .mcp_helpers import mcp_to_openai_tool, mcp_to_anthropic_tool, get_tools_from_context
-from .memory_runtime import InMemoryRunner
-from .policy_proxy import PolicyProxy
-```
-
-##### 15.3: Update README.md
-**File**: `README.md`
-
-Add sections:
-- Quick start with function-based policies
-- How to use `@policy` decorator
-- Context access via `get_ctx()`
-- MCP integration patterns
-- Migration guide from old pattern
-
-##### 15.4: Create Migration Guide
-**File**: `docs/MIGRATION.md` (new)
-
-Document:
-- Why we migrated to function-based
-- Step-by-step conversion process
-- Before/after examples
-- Breaking changes
-- Troubleshooting common issues
-
-## Data Flow Diagrams
-
-### Registry Structure
-```
-self._registry = {
-    "web_search": <function web_search>,      # Has ._tool_metadata
-    "llm": <function llm>,                    # Has ._tool_metadata
-    "search_agent": <function search_agent>   # Has ._tool_metadata
-}
-```
-
-### Tool Metadata Flow
-```
-@policy(description="...")
-    ↓
-Tool.from_function() extracts schema
-    ↓
-Metadata stored on func._tool_metadata
-    ↓
-_bind() extracts and passes to PolicyProxy
-    ↓
-PolicyProxy preserves for MCP exposure
-    ↓
-expose_to_mcp() uses metadata directly
-```
-
-### Context Flow
-```
-ctx.search_agent(prompt="...")
-    ↓
-PolicyProxy.__call__(**kwargs)
-    ↓
-runner.execute("search_agent", kwargs)
-    ↓
-_set_ctx() → run function → _reset_ctx()
-    ↓
-Inside function: AppContext.get_ctx()
-```
-
-### Execution Flow
-```
-Initialization:
-  ctx = AppContext(runner)
-    ↓
-  BaseContext.__init__ sets context:
-    self._ctx_var.set(self)  # Set once
-    ↓
-User Code:
-  result = await ctx.search_agent(prompt="test")
-    ↓
-PolicyProxy routes to:
-  runner.execute("search_agent", {"prompt": "test"})
-    ↓
-Runner executes:
-  wrapped = invoke_options_wrapper_for_func(func, self._context)
-  result = await wrapped(**kwargs)
-    ↓
-Function executes:
-  async def search_agent(prompt):
-      ctx = AppContext.get_ctx()  # Gets the context (already set)
-      await ctx.llm(...)           # Nested policy call
-    ↓
-Result returned to user
-```
-
-## Critical Dependencies
-
-1. **Task 8 must be atomic**: Cannot mix class-based and function-based patterns
-2. **invoke_options_wrapper must work with functions** before Task 8
-3. **All decorators must be implemented** before converting policies
-4. **Context management must be working** before migration
-
-## Testing Strategy
-
-### Unit Tests
-- Decorator functionality
-- PolicyProxy behavior
-- ContextVar isolation
-- Tool metadata extraction
-- MCP conversion helpers
-
-### Integration Tests
-- Full policy execution flow
-- Nested policy calls
-- Concurrent context usage
-- MCP server integration
-
-### Migration Validation
-- All examples run successfully
-- No regression in functionality
-- Performance is maintained or improved
-
-## Rollback Plan
-
-If migration fails:
-1. Revert to previous commit
-2. All changes are in a feature branch
-3. Class-based pattern still available in git history
-
-## Success Criteria
-
-- [ ] All policies converted to function-based
-- [ ] All examples work with new pattern
-- [ ] All tests pass
-- [ ] MCP integration works
-- [ ] Documentation updated
-- [ ] No performance regression
-- [ ] IDE autocomplete works for all policies
-
-## Timeline & Milestones
-
-### Milestone 1: Infrastructure (Tasks 1-7)
-Foundation for function-based policies
-
-### Milestone 2: Migration (Task 8)
-Convert all policies atomically
-
-### Milestone 3: Integration (Tasks 9-11)
-MCP helpers and conversions
-
-### Milestone 4: Polish (Tasks 12-15)
-Examples, tests, documentation
-
-## Notes
-
-- Per-subclass singleton via ContextVar allows multiple context types
-- FastMCP's `Tool.from_function()` enables schema extraction without registration
-- Explicit MCP exposure gives control over what LLMs can access
-- Function-based approach improves IDE support and developer experience
