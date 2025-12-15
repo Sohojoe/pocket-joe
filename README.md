@@ -3,7 +3,7 @@
 **LLM Agents are just agents...**
 
 - Agents are policies
-- A policy reasons over observations and chooses a batch of actions
+- A policy reasons over observations and chooses a batch of options
 - A policy can be any mix of LLM-based, human-in-the-loop, or heuristic
 
 ## Semantics
@@ -12,7 +12,7 @@ An agent system using Reinforcement Learning theory with LLM semantics as first 
 
 - `policy`: all code/logic/llm are policies
 - `observations` - the set of observations for the policy to reason over
-- `options` - a set of optional sub policies that the policy can choose
+- `options` - additional action spaces available to the policy
 - `selected_actions` - the set of concurrent actions the policy chose to take
 - `Message`: a shared dataclass for `observations` and `actions` that aligns with llm semantics
 
@@ -21,70 +21,80 @@ An agent system using Reinforcement Learning theory with LLM semantics as first 
 In LLM APIs, everything is a `Message`. We adopt this as our universal unit:
 
 - **Input:** `observations: list[Message]` (what the policy sees)
-- **Output:** `selected_actions: list[Message]` (what the policy does)
+- **Output:** `selected_actions` - the policy's action space (owns its outputs)
 
-**Key insight:** The runtime automatically invokes all option calls and injects the results back as observations. Your policy just returns requests; the platform handles execution.
+**Key insight:** When options are provided, they expand the policy's action space. The runtime automatically invokes all option calls and injects the results back as observations.
 
 ### Everything is a Policy
+
+**Universal Return Types:** Policies can return any JSON-serializable type - the framework automatically wraps results when called as options.
 
 An LLM policy that can call other policies:
 
 ```python
 @policy.tool(description="Calls LLM with tool support")
 async def openai_llm_policy_v1(observations: list[Message], options: list[OptionSchema]) -> list[Message]:
-    """LLM policy that calls OpenAI GPT-4 with tool support.
-    Args:
-        observations: List of Messages representing the conversation history + new input
-        options: Set of allowed options the LLM can call
-    """
-        openai = AsyncOpenAI()
-        response = await openai.chat.completions.create(
-            model="gpt-4",
-            messages=observations_to_completions_messages(observations),
-            tools=options_to_completions_tools(options))
-        return completions_response_to_messages(response)
+    """LLM policy that calls OpenAI GPT-4 with tool support."""
+    openai = AsyncOpenAI()
+    response = await openai.chat.completions.create(
+        model="gpt-4",
+        messages=observations_to_completions_messages(observations),
+        tools=options_to_completions_tools(options))
+    return completions_response_to_messages(response)
 ```
 
-A simple heuristic policy:
+A simple helper policy returning primitives:
 
 ```python
 @policy.tool(description="Performs a web search and returns results.")
-async def web_seatch_ddgs_policy(query: str,) -> list[Message]:
-        """Performs a web search and returns results.        
-        Args:
-            query: The search query string to search for
-        """
-        results = DDGS().text(query, max_results=5)
-        results_str = "\n\n".join([f"Title: {r['title']}\nURL: {r['href']}\nSnippet: {r['body']}" for r in results])
-        return [Message(
-            actor="web_seatch_ddgs_policy",
-            type="action_result",
-            payload={"content": results_str}
-        )]
+async def web_search_policy(query: str) -> str:
+    """Performs a web search and returns results."""
+    results = DDGS().text(query, max_results=5)
+    return "\n\n".join([f"Title: {r['title']}\nURL: {r['href']}\nSnippet: {r['body']}" for r in results])
+```
+
+A policy returning structured data:
+
+```python
+@policy.tool(description="Transcribe YouTube video")
+async def transcribe_youtube_policy(url: str) -> dict[str, str]:
+    """Get video title, transcript and metadata from YouTube URL."""
+    video_id = _extract_video_id(url)
+    transcript = YouTubeTranscriptApi().fetch(video_id)
+    return {
+        "title": title,
+        "transcript": " ".join([snippet.text for snippet in transcript]),
+        "video_id": video_id
+    }
 ```
 
 An orchestrator policy that coordinates LLM + search:
 
 ```python
 @policy.tool(description="Orchestrates LLM with web search tool")
-async def search_agent(prompt: str) -> list[Message]:
-        """Orchestrator that gives the LLM access to web search.
-        Args:
-            prompt: The user prompt to process
-        """
-        ctx = AppContext.get_ctx()
-        system_message = Message(actor="system", type="text",
-            payload={"content": "You are an AI assistant that can use tools to help answer user questions."})
-        prompt_message = Message(actor="user", type="text", payload={"content": prompt})
+async def search_agent(prompt: str, max_iterations: int = 3) -> list[Message]:
+    """Orchestrator that gives the LLM access to web search."""
+    ctx = AppContext.get_ctx()
 
-        history = [system_message, prompt_message]
-        while True:
-            selected_actions = await ctx.llm(observations=history, options=OptionSchema.from_func([ctx.web_search]))
-            history.extend(selected_actions)
-            if not any(msg.type == "action_call" for msg in selected_actions):
-                break
+    system_builder = MessageBuilder(policy="system", role_hint_for_llm="system")
+    system_builder.add_text("You are an AI assistant that can use tools.")
+    system_message = system_builder.to_message()
 
-        return history
+    prompt_builder = MessageBuilder(policy="user", role_hint_for_llm="user")
+    prompt_builder.add_text(prompt)
+    prompt_message = prompt_builder.to_message()
+
+    history = [system_message, prompt_message]
+    for _ in range(max_iterations):
+        selected_actions = await ctx.llm(
+            observations=history,
+            options=OptionSchema.from_func([ctx.web_search])
+        )
+        history.extend(selected_actions)
+        if not any(msg.payload and isinstance(msg.payload, OptionCallPayload) for msg in selected_actions):
+            break
+
+    return history
 ```
 
 Use `AppContext` for registry (gives IDE type hints):
@@ -105,15 +115,22 @@ async def main():
     runner = InMemoryRunner()
     ctx = AppContext(runner)
     result = await ctx.search_agent(prompt="What is the latest Python version?")
-    print(f"\nFinal Result: {result[-1].payload['content']}")
+
+    # Get final text message
+    final_msg = next((msg for msg in reversed(result) if msg.parts), None)
+    if final_msg and final_msg.parts:
+        text_parts = [p for p in final_msg.parts if isinstance(p, TextPart)]
+        if text_parts:
+            print(f"\nFinal Result: {text_parts[0].text}")
 ```
 
 **Why this matters:**
 
-- Same interface for LLM, human, heuristic policies
-- All policy parameters are optional (define what you need)
-- Type-safe composition with IDE support
-- Enables evolution: human → heuristic → LLM with no refactoring
+- **Universal Composability:** Decorate any function - it works like FastAPI/FastMCP endpoints
+- **Flexible Return Types:** Return primitives (str, dict, list), or list[Message] for complex flows
+- **Auto-wrapping:** Framework automatically wraps results in OptionResultPayload when called as options
+- **Type-safe:** Full IDE support with typed context and message payloads
+- **Evolution-friendly:** Start simple (primitives) → add complexity (messages) with no refactoring
 
 A correct, simple, performant, and pythonic framework for building durable AI agents.
 
