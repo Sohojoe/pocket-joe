@@ -1,62 +1,61 @@
 import asyncio
 from typing import Any
 from collections.abc import Callable
-from .core import Message, BaseContext
+from .core import Message, BaseContext, OptionCallPayload, OptionResultPayload, OptionResultBuilder
 
 
 async def _call_options_in_parallel(ctx: BaseContext, messages: list[Message]) -> list[Message]:
-    """Execute action_call messages in parallel and return their results.
-    
+    """Execute option_call messages in parallel and return their results.
+
     Args:
         ctx: The context containing bound policies
-        messages: List of messages that may contain action_call messages
-        
+        messages: List of messages that may contain option_call messages
+
     Returns:
-        List of action_result messages from executing the action_calls
+        List of option_result messages from executing the option_calls
     """
 
     async def execute_option(option: Message) -> list[Message]:
-        """Execute a single action_call option."""
-        payload_dict = option.payload
-        policy_name = str(payload_dict.get("policy"))
-        
-        args = payload_dict.get("payload")
+        """Execute a single option_call and wrap result in OptionResultPayload."""
+        if not isinstance(option.payload, OptionCallPayload):
+            raise TypeError(f"Expected OptionCallPayload, got {type(option.payload)}")
+
+        call_payload = option.payload
+        policy_name = call_payload.option_name
+        args = call_payload.arguments
+
         if not isinstance(args, dict):
             raise TypeError(
-                f"Policy '{policy_name}'.payload must be a dict[str, Any], "
+                f"Policy '{policy_name}' arguments must be a dict[str, Any], "
                 f"got {type(args).__name__}: {args}"
             )
-        
+
         func = ctx.get_policy(policy_name)
-        selected_actions = await func(**args)
-        final_actions: list[Message] = []
-        for msg in selected_actions:
-            if not isinstance(msg, Message):
-                raise TypeError(
-                    f"Policy '{policy_name}' must return list[Message], "
-                    f"got {type(msg).__name__}: {msg}"
-                )
-            if option.type == "action_call":
-                msg = msg.model_copy(update={
-                    "type": "action_result",  # ensure type is action_result
-                    "tool_id": option.tool_id  # Propagate tool_id to action_result
-                })
-            final_actions.append(msg)
+        result = await func(**args)
 
-        return final_actions
+        # Wrap result in OptionResultPayload
+        wrapped = Message(
+            policy=policy_name,
+            payload=OptionResultPayload(
+                invocation_id=call_payload.invocation_id,
+                option_name=policy_name,
+                result=result
+            )
+        )
+        return [wrapped]
 
-    # Find all uncompleted action_call messages
+    # Find all uncompleted option_call messages
     completed_ids = {
-        msg.tool_id for msg in messages
-        if msg.type == "action_result"
+        msg.payload.invocation_id for msg in messages
+        if msg.payload and isinstance(msg.payload, OptionResultPayload)
     }
 
     options = [
-        msg for msg in messages 
-        if msg.type == "action_call" 
-        and msg.tool_id not in completed_ids
+        msg for msg in messages
+        if msg.payload and isinstance(msg.payload, OptionCallPayload)
+        and msg.payload.invocation_id not in completed_ids
     ]
-    
+
     if not options:
         return []
 
@@ -65,7 +64,7 @@ async def _call_options_in_parallel(ctx: BaseContext, messages: list[Message]) -
     option_selected_actions = await asyncio.gather(
         *[execute_option(option) for option in options]
     )
-    
+
     # Flatten results
     all_option_selected_actions = []
     for result in option_selected_actions:
@@ -74,18 +73,24 @@ async def _call_options_in_parallel(ctx: BaseContext, messages: list[Message]) -
 
 def invoke_options_wrapper_for_func(func: Callable, ctx: BaseContext):
     """Returns a wrapped callable that executes options in parallel for function-based policies.
-    
+
     Args:
         func: The policy function to wrap
         ctx: The context containing bound policies
-        
+
     Returns:
         Wrapped async function that executes the policy and its options in parallel
     """
     async def wrapped(**kwargs):
         selected_actions = await func(**kwargs)
-        option_results = await _call_options_in_parallel(ctx, selected_actions)
-        return selected_actions + option_results
+
+        # Only process options if result is list[Message]
+        if isinstance(selected_actions, list) and selected_actions and isinstance(selected_actions[0], Message):
+            option_results = await _call_options_in_parallel(ctx, selected_actions)
+            return selected_actions + option_results
+
+        # Otherwise return as-is (primitives, dicts, etc.)
+        return selected_actions
     return wrapped
 
 # proposals for additional wrappers:

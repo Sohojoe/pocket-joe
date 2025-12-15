@@ -1,12 +1,16 @@
 """port of https://github.com/The-Pocket/PocketFlow-Tutorial-Youtube-Made-Simple"""
 
 import asyncio
+from typing import Any
+
 import yaml
 from pocket_joe import (
     Message,
-    policy, 
-    BaseContext, 
+    policy,
+    BaseContext,
     InMemoryRunner,
+    MessageBuilder,
+    TextPart,
 )
 from examples.utils import openai_llm_policy_v1, transcribe_youtube_policy
 
@@ -16,7 +20,7 @@ from examples.utils import openai_llm_policy_v1, transcribe_youtube_policy
 async def extract_topics_policy(
     title: str,
     transcript: str,
-) -> list[Message]:
+) -> dict:
     """Extract interesting topics and generate questions from transcript.
     
     Args:
@@ -34,60 +38,57 @@ VIDEO TITLE: {title}
 TRANSCRIPT:
 {transcript}
 
-Format your response in YAML:
+IMPORTANT: Return ONLY valid YAML with this EXACT structure. Do not add any text before or after the YAML block.
 
 ```yaml
 topics:
-- title: |
-    First Topic Title
-questions:
-    - |
-    Question 1 about first topic?
-    - |
-    Question 2 about first topic?
-- title: |
-    Second Topic Title
-questions:
-    - |
-    Question 1 about second topic?
+  - title: "First Topic Title"
+    questions:
+      - "Question 1 about first topic?"
+      - "Question 2 about first topic?"
+  - title: "Second Topic Title"
+    questions:
+      - "Question 1 about second topic?"
 ```
 """
-    
-    system_message = Message(
-        actor="system",
-        type="text",
-        payload={"content": "You are a content analysis assistant."}
-    )
-    prompt_message = Message(
-        actor="user",
-        type="text",
-        payload={"content": prompt}
-    )
+
+    system_builder = MessageBuilder(policy="system", role_hint_for_llm="system")
+    system_builder.add_text("You are a content analysis assistant.")
+    system_message = system_builder.to_message()
+
+    prompt_builder = MessageBuilder(policy="user", role_hint_for_llm="user")
+    prompt_builder.add_text(prompt)
+    prompt_message = prompt_builder.to_message()
 
     ctx = AppContext.get_ctx()
     history = [system_message, prompt_message]
 
     response = await ctx.llm(observations=history, options=[])
-    
+
     # Extract YAML from response
-    content = response[-1].payload.get("content", "")
+    last_msg = next((msg for msg in reversed(response) if msg.parts), None)
+    if last_msg and last_msg.parts:
+        text_parts = [p for p in last_msg.parts if isinstance(p, TextPart)]
+        content = text_parts[0].text if text_parts else ""
+    else:
+        content = ""
+
     yaml_content = content.split("```yaml")[1].split("```")[0].strip() if "```yaml" in content else content
-    parsed = yaml.safe_load(yaml_content)
-    
-    result_message = Message(
-        actor="extract_topics",
-        type="action_result",
-        payload={"topics": parsed.get("topics", [])[:5]}
-    )
-    
-    return [result_message]
+
+    try:
+        parsed = yaml.safe_load(yaml_content)
+        return parsed
+    except yaml.YAMLError as e:
+        print(f"YAML parsing error in extract_topics: {e}")
+        print(f"Received content:\n{yaml_content}")
+        return {"topics": []}
 
 @policy.tool(description="Rephrase topics and questions, generate simple answers")
 async def process_topic_policy(
     topic_title: str,
     questions: list[str],
     transcript: str,
-) -> list[Message]:
+) -> dict[str, Any]:
     """
     Rephrase topic title and questions, generate simple answers.
     
@@ -119,58 +120,50 @@ Instructions:
 - Base answers strictly on the transcript content
 - Avoid condescending language
 
-Format your response in YAML (ensure all questions are included):
+IMPORTANT: Return ONLY valid YAML with this EXACT structure. Use quoted strings, not pipe blocks.
 
 ```yaml
-rephrased_title: |
-Clear, engaging topic title
+rephrased_title: "Clear, engaging topic title"
 questions:
-- original: |
-    First question here
-rephrased: |
-    Rephrased first question
-answer: |
-    Answer based on transcript
-- original: |
-    Second question here
-rephrased: |
-    Rephrased second question
-answer: |
-    Answer based on transcript
+  - original: "First question here"
+    rephrased: "Rephrased first question"
+    answer: "Answer based on transcript"
+  - original: "Second question here"
+    rephrased: "Rephrased second question"
+    answer: "Answer based on transcript"
 ```
 """
-    
-    system_message = Message(
-        actor="system",
-        type="text",
-        payload={"content": "You are a content simplification assistant."}
-    )
-    prompt_message = Message(
-        actor="user",
-        type="text",
-        payload={"content": prompt}
-    )
-    
+
+    system_builder = MessageBuilder(policy="system", role_hint_for_llm="system")
+    system_builder.add_text("You are a content simplification assistant.")
+    system_message = system_builder.to_message()
+
+    prompt_builder = MessageBuilder(policy="user", role_hint_for_llm="user")
+    prompt_builder.add_text(prompt)
+    prompt_message = prompt_builder.to_message()
+
     history = [system_message, prompt_message]
     ctx = AppContext.get_ctx()
 
     response = await ctx.llm(observations=history, options=[])
-    
+
     # Extract YAML from response
-    content = response[-1].payload.get("content", "")
+    last_msg = next((msg for msg in reversed(response) if msg.parts), None)
+    if last_msg and last_msg.parts:
+        text_parts = [p for p in last_msg.parts if isinstance(p, TextPart)]
+        content = text_parts[0].text if text_parts else ""
+    else:
+        content = ""
+
     yaml_content = content.split("```yaml")[1].split("```")[0].strip() if "```yaml" in content else content
-    parsed = yaml.safe_load(yaml_content)
-    
-    result_message = Message(
-        actor="process_topic",
-        type="action_result",
-        payload={
-            "rephrased_title": parsed.get("rephrased_title", topic_title),
-            "questions": parsed.get("questions", [])
-        }
-    )
-    
-    return [result_message]
+
+    try:
+        parsed = yaml.safe_load(yaml_content)
+        return parsed
+    except yaml.YAMLError as e:
+        print(f"YAML parsing error in process_topic: {e}")
+        print(f"Received content:\n{yaml_content}")
+        return {"rephrased_title": topic_title, "questions": []}
 
 @policy.tool(description="Process YouTube video to extract topics, questions, and generate ELI5 answers")
 async def youtube_summarizer(
@@ -190,26 +183,23 @@ async def youtube_summarizer(
     ctx = AppContext.get_ctx()
 
     # Step 1: Get video info
-    result = await ctx.transcribe_youtube(url=url)
-    video_info = result[0].payload
-    
+    video_info = await ctx.transcribe_youtube(url=url)
+
     if "error" in video_info:
-        return [Message(
-            actor="youtube_summarizer",
-            type="text",
-            payload={"content": f"Error: {video_info['error']}"}
-        )]
+        builder = MessageBuilder(policy="youtube_summarizer")
+        builder.add_text(f"Error: {video_info['error']}")
+        return [builder.to_message()]
     
     print(f"Video: {video_info['title']}")
     print(f"Transcript length: {len(video_info['transcript'])} chars")
     
     # Step 2: Extract topics and questions
     print("\n--- Extracting topics and questions ---")
-    extract_result = await ctx.extract_topics(
+    topics_data = await ctx.extract_topics(
         title=video_info["title"],
         transcript=video_info["transcript"]
     )
-    topics = extract_result[0].payload["topics"]
+    topics = topics_data.get("topics", [])
     print(f"Found {len(topics)} topics")
     
     # Step 3: Process each topic concurrently
@@ -236,8 +226,7 @@ async def youtube_summarizer(
     
     # Build processed topics list
     processed_topics = []
-    for i, result in zip(topic_indices, results):
-        processed = result[0].payload
+    for i, processed in zip(topic_indices, results):
         processed_topics.append({
             "original_title": topics[i]["title"],
             "rephrased_title": processed["rephrased_title"],
@@ -265,15 +254,9 @@ async def youtube_summarizer(
     print("Processing completed successfully!")
     print("=" * 50 + "\n")
     
-    return [Message(
-        actor="youtube_summarizer",
-        type="text",
-        payload={
-            "content": output,
-            "video_info": video_info,
-            "topics": processed_topics
-        }
-    )]
+    builder = MessageBuilder(policy="youtube_summarizer")
+    builder.add_text(output)
+    return [builder.to_message()]
 
 
 # --- App Context ---
@@ -300,12 +283,16 @@ async def main():
     result = await ctx.youtube_summarizer(url=url)
     
     # Print summary
-    print("\n" + result[-1].payload['content'])
+    last_msg = result[-1]
+    if last_msg.parts:
+        text_parts = [p for p in last_msg.parts if isinstance(p, TextPart)]
+        output_text = text_parts[0].text if text_parts else ""
+        print("\n" + output_text)
     
-    # Optionally save to file
-    with open("youtube_summary.md", "w") as f:
-        f.write(result[-1].payload['content'])
-    print("\nSummary saved to youtube_summary.md")
+        # Optionally save to file
+        with open("youtube_summary.md", "w") as f:
+            f.write(output_text)
+        print("\nSummary saved to youtube_summary.md")
     
     print("\n--- Demo Complete ---")
 

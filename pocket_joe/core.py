@@ -3,26 +3,21 @@ from collections.abc import Iterable
 from contextvars import ContextVar
 from pydantic import BaseModel, ConfigDict
 
+# Import new message types
+from .message import (
+    Message,
+    TextPart,
+    MediaPart,
+    Part,
+    OptionCallPayload,
+    OptionResultPayload,
+    Payload,
+    MessageBuilder,
+    OptionResultBuilder,
+)
+
 T = TypeVar('T', bound='BaseContext')
 F = TypeVar('F', bound=Callable[..., Awaitable[list['Message']]])
-
-# from pocket_joe.context import BaseContext
-
-
-class Message(BaseModel):
-    """Immutable message structure for agent communication.
-    
-    Messages flow through the agent system carrying information between
-    actors (user, assistant, tools). Each message has a type indicating
-    its purpose (text, action_call, action_result, etc.).
-    """
-    model_config = ConfigDict(frozen=True)
-    
-    actor: str                 # e.g. "user", "assistant", "get_weather"
-    type: str                  # e.g. "text", "action_call", "action_result"
-    payload: dict[str, Any]    # JSON-serializable data
-    tool_id: str | None = None  # Optional tool identifier
-    id: str = ""               # Unique identifier (engine-generated)
 
 
 class OptionSchema(BaseModel):

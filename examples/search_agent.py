@@ -1,10 +1,12 @@
 import asyncio
 from pocket_joe import (
-    Message, 
+    Message,
     policy,
-    BaseContext, 
+    BaseContext,
     InMemoryRunner,
     OptionSchema,
+    MessageBuilder,
+    OptionCallPayload,
     )
 from examples.utils import openai_llm_policy_v1, web_seatch_ddgs_policy
 
@@ -25,16 +27,13 @@ async def search_agent(
         List of Messages containing the conversation history with search results and final answer
     """
 
-    system_message = Message(
-        actor="system",
-        type="text",
-        payload={"content": "You are an AI assistant that can use tools to help answer user questions."}
-    )
-    prompt_message = Message(
-        actor="user",
-        type="text",
-        payload={"content": prompt}
-    )
+    system_builder = MessageBuilder(policy="system", role_hint_for_llm="system")
+    system_builder.add_text("You are an AI assistant that can use tools to help answer user questions.")
+    system_message = system_builder.to_message()
+
+    prompt_builder = MessageBuilder(policy="user", role_hint_for_llm="user")
+    prompt_builder.add_text(prompt)
+    prompt_message = prompt_builder.to_message()
 
     ctx = AppContext.get_ctx()
     history = [system_message, prompt_message]
@@ -44,12 +43,12 @@ async def search_agent(
         iteration += 1
         print(f"\n--- Search Agent Iteration {iteration} ---")
         selected_actions = await ctx.llm(
-            observations=history, 
+            observations=history,
             options=OptionSchema.from_func([ctx.web_search])
             )
         history.extend(selected_actions)
-        # stop if no tools called
-        if not any(msg.type == "action_call" for msg in selected_actions):
+        # stop if no option calls
+        if not any(msg.payload and isinstance(msg.payload, OptionCallPayload) for msg in selected_actions):
             break
 
     return history
@@ -67,12 +66,18 @@ class AppContext(BaseContext):
 
 async def main():
     print("--- Starting Search Agent Demo ---")
-    
+
     runner = InMemoryRunner()
     ctx = AppContext(runner)
     result = await ctx.search_agent(prompt="What is the latest Python version?")
-    
-    print(f"\nFinal Result: {result[-1].payload['content']}")
+
+    # Get final text message
+    final_msg = next((msg for msg in reversed(result) if msg.parts), None)
+    if final_msg and final_msg.parts:
+        from pocket_joe import TextPart
+        text_parts = [p for p in final_msg.parts if isinstance(p, TextPart)]
+        if text_parts:
+            print(f"\nFinal Result: {text_parts[0].text}")
     print("--- Demo Complete ---")
 
 if __name__ == "__main__":

@@ -54,16 +54,11 @@ class TestPolicyToolDecorator:
     async def test_tool_function_callable(self):
         """Test that decorated function can be called normally"""
         @policy.tool(description="Echo tool")
-        async def echo(message: str) -> list[Message]:
-            return [Message(
-                actor="echo",
-                type="text",
-                payload={"content": message}
-            )]
+        async def echo(message: str) -> str:
+            return message
 
         result = await echo(message="hello")
-        assert len(result) == 1
-        assert result[0].payload["content"] == "hello"
+        assert result == "hello"
 
 
 class TestPolicyResourceDecorator:

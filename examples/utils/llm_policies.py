@@ -10,55 +10,83 @@ from typing import Any
 from collections.abc import Callable
 import uuid
 
-from pocket_joe import Message, policy
-from pocket_joe import OptionSchema
+from pocket_joe import Message, policy, OptionSchema, BaseContext
+from pocket_joe import (
+    TextPart,
+    OptionCallPayload,
+    OptionResultPayload,
+    MessageBuilder,
+)
 from openai import AsyncOpenAI
-
-from pocket_joe import BaseContext
 
 
 def observations_to_completions_messages(in_msgs: list[Message]) -> list[dict[str, Any]]:
     """Convert pocket-joe Message list to chat completions API message format.
-    
+
+    Adapts framework messages to OpenAI's chat completions format.
+    Only serializes complete option_call+option_result pairs (same invocation_id).
+
     Args:
         in_msgs: List of Messages from the conversation history
-        
+
     Returns:
         List of dicts in chat completions format with roles and content
     """
 
-    
+    # Build mapping of invocation_id -> option_result
     tool_results = dict[str, Message]()
     for msg in in_msgs:
-        if msg.type == "action_result":
-            if not msg.tool_id:
-                raise ValueError(f"action_result message missing tool_id: {msg}")
-            tool_results[msg.tool_id] = msg
-    
+        if msg.payload and isinstance(msg.payload, OptionResultPayload):
+            tool_results[msg.payload.invocation_id] = msg
+
     messages = []
     for msg in in_msgs:
-        if msg.type == "text":
-            messages.append({"role": msg.actor, "content": msg.payload["content"]})
-        elif msg.type == "action_call":
+        # Handle parts messages (text + media)
+        if msg.parts:
+            # Extract text parts
+            text_parts = [p for p in msg.parts if isinstance(p, TextPart)]
+            content = " ".join(p.text for p in text_parts)
+
+            role = msg.role_hint_for_llm or "assistant"
+            messages.append({"role": role, "content": content})
+
+        # Handle option_call messages
+        elif msg.payload and isinstance(msg.payload, OptionCallPayload):
+            call_payload = msg.payload
+            invocation_id = call_payload.invocation_id
+
+            # Only include if we have the corresponding result (complete pair)
+            if invocation_id not in tool_results:
+                continue  # Skip incomplete calls
+
             messages.append({
                 "role": "assistant",
                 "tool_calls": [{
                     "type": "function",
-                    "id": msg.tool_id,
+                    "id": invocation_id,
                     "function": {
-                        "name": msg.payload["policy"],
-                        "arguments": json.dumps(msg.payload["payload"])
+                        "name": call_payload.option_name,
+                        "arguments": json.dumps(call_payload.arguments)
                     }
                 }],
             })
-            if not msg.tool_id:
-                raise ValueError(f"action_result message missing tool_id: {msg}")
-            result = tool_results[msg.tool_id]
-            messages.append({
-                "role": "tool",
-                "tool_call_id": msg.tool_id,
-                "content": json.dumps(result.payload)
-            })
+
+            result_msg = tool_results[invocation_id]
+            result_payload = result_msg.payload
+            if isinstance(result_payload, OptionResultPayload):
+                # Serialize result - use JSON for complex types, str for primitives
+                result = result_payload.result
+                if isinstance(result, str):
+                    content = result
+                else:
+                    content = json.dumps(result)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": invocation_id,
+                    "content": content
+                })
+
     return messages
 
 def options_to_completions_tools(options: list[OptionSchema] | None) -> list[dict]:
@@ -81,39 +109,37 @@ def options_to_completions_tools(options: list[OptionSchema] | None) -> list[dic
         })
     return tools
 
-def completions_response_to_messages(response: Any) -> list[Message]:
+def completions_response_to_messages(response: Any, policy: str = "openai_llm") -> list[Message]:
     """Convert chat completions API response to pocket-joe Messages.
-    
+
     Args:
         response: ChatCompletion response object from OpenAI API
-        
+        policy: Policy name for the messages (defaults to "openai_llm")
+
     Returns:
-        List of Messages containing text responses and/or action_call messages
+        List of Messages containing text responses and/or option_call messages
     """
     new_messages = []
     msg = response.choices[0].message
-    
+
     if msg.content:
-        new_messages.append(Message(
-            id=str(uuid.uuid4()),
-            actor="assistant",
-            type="text",
-            payload={"content": msg.content}
-        ))
-        
+        builder = MessageBuilder(policy=policy, role_hint_for_llm="assistant")
+        builder.add_text(msg.content)
+        new_messages.append(builder.to_message())
+
     if msg.tool_calls:
         for tc in msg.tool_calls:
             new_messages.append(Message(
                 id=str(uuid.uuid4()),
-                actor="assistant",
-                type="action_call",
-                tool_id=tc.id,
-                payload={
-                    "policy": tc.function.name,
-                    "payload": json.loads(tc.function.arguments)
-                }
+                policy=policy,
+                role_hint_for_llm="assistant",
+                payload=OptionCallPayload(
+                    invocation_id=tc.id,
+                    option_name=tc.function.name,
+                    arguments=json.loads(tc.function.arguments)
+                )
             ))
-            
+
     return new_messages
 
 @policy.tool(description="Calls LLM with tool support")

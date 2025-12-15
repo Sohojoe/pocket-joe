@@ -18,25 +18,24 @@ async def main():
         url = sys.argv[1]
     else:
         url = "https://youtu.be/h_Zk4fDDcSY?si=LaxkHlRgWTCzq1n5"
-    
+
     print(f"Transcribing: {url}\n")
-    
+
     runner = InMemoryRunner()
     ctx = AppContext(runner)
-    
-    result = await ctx.transcribe_youtube(url=url)
-    payload = result[0].payload
-    
-    if "error" in payload:
-        print(f"Error: {payload['error']}")
+
+    info = await ctx.transcribe_youtube(url=url)
+
+    if "error" in info:
+        print(f"Error: {info['error']}")
         return
-    
-    print(f"Video: {payload['title']}")
-    print(f"Video ID: {payload['video_id']}")
-    print(f"Thumbnail: {payload['thumbnail_url']}")
-    print(f"Transcript length: {len(payload['transcript'])} chars")
+
+    print(f"Video: {info.get('title', 'Unknown')}")
+    print(f"Video ID: {info.get('video_id', 'Unknown')}")
+    print(f"Thumbnail: {info.get('thumbnail_url', 'Unknown')}")
+    print(f"Transcript length: {len(info.get('transcript', ''))} chars")
     print(f"\nFull transcript:")
-    print(payload['transcript'])
+    print(info.get('transcript', ''))
 
 
 if __name__ == "__main__":

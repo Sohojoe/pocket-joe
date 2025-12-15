@@ -52,6 +52,22 @@ When acting as an AI assistant for this project (`pocket-joe`), you must adopt a
   * `uv run`: Execute scripts within the project environment.
 * **Note:** Do not use `pip` directly for project dependencies. Rely on `uv` to manage the lockfile (`uv.lock`).
 
+## Communication Style
+
+* **No meta-commentary:** Don't explain what you're about to do or apologize. Just do it.
+* **No justification unless asked:** The code should speak for itself. Don't explain why unless the user asks.
+* **Single response for task completion:** Don't break tasks into "I'll do X, then Y, then Z" - just do X, Y, and Z.
+* **Assume competence:** The user knows Python and the codebase. Don't over-explain.
+* **Direct execution:** Use `uv run pytest` not `python -m pytest`. Use tools correctly the first time.
+
+## Anti-Patterns to Avoid
+
+* ❌ "Let me check X, then I'll do Y" - Just check X and do Y in one response
+* ❌ "I apologize for..." - Skip it. Fix it.
+* ❌ Creating helpers "for future flexibility" - YAGNI (You Ain't Gonna Need It)
+* ❌ Asking permission for standard operations - Just do them
+* ❌ Verbose summaries - Keep them under 3 sentences
+
 ## Synthesis: How to Act
 
 * **Be Concise:** Do not waffle. Get to the point.
