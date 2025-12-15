@@ -1,9 +1,9 @@
 """port of https://github.com/The-Pocket/PocketFlow-Tutorial-Youtube-Made-Simple"""
 
 import asyncio
-from typing import Any
-
 import yaml
+from pydantic import BaseModel
+
 from pocket_joe import (
     Message,
     policy,
@@ -15,12 +15,37 @@ from pocket_joe import (
 from examples.utils import openai_llm_policy_v1, transcribe_youtube_policy
 
 
+# --- Pydantic Models ---
+class TopicData(BaseModel):
+    """Topic with associated questions."""
+    title: str
+    questions: list[str]
+
+
+class ExtractTopicsResult(BaseModel):
+    """Result of topic extraction."""
+    topics: list[TopicData]
+
+
+class ProcessedQuestion(BaseModel):
+    """Rephrased question with answer."""
+    original: str
+    rephrased: str
+    answer: str
+
+
+class ProcessTopicResult(BaseModel):
+    """Result of topic processing."""
+    rephrased_title: str
+    questions: list[ProcessedQuestion]
+
+
 # --- Policies ---
 @policy.tool(description="Extract interesting topics and questions from YouTube transcript")
 async def extract_topics_policy(
     title: str,
     transcript: str,
-) -> dict:
+) -> ExtractTopicsResult:
     """Extract interesting topics and generate questions from transcript.
     
     Args:
@@ -77,18 +102,18 @@ topics:
 
     try:
         parsed = yaml.safe_load(yaml_content)
-        return parsed
-    except yaml.YAMLError as e:
+        return ExtractTopicsResult.model_validate(parsed)
+    except (yaml.YAMLError, Exception) as e:
         print(f"YAML parsing error in extract_topics: {e}")
         print(f"Received content:\n{yaml_content}")
-        return {"topics": []}
+        return ExtractTopicsResult(topics=[])
 
 @policy.tool(description="Rephrase topics and questions, generate simple answers")
 async def process_topic_policy(
     topic_title: str,
     questions: list[str],
     transcript: str,
-) -> dict[str, Any]:
+) -> ProcessTopicResult:
     """
     Rephrase topic title and questions, generate simple answers.
     
@@ -159,11 +184,11 @@ questions:
 
     try:
         parsed = yaml.safe_load(yaml_content)
-        return parsed
-    except yaml.YAMLError as e:
+        return ProcessTopicResult.model_validate(parsed)
+    except (yaml.YAMLError, Exception) as e:
         print(f"YAML parsing error in process_topic: {e}")
         print(f"Received content:\n{yaml_content}")
-        return {"rephrased_title": topic_title, "questions": []}
+        return ProcessTopicResult(rephrased_title=topic_title, questions=[])
 
 @policy.tool(description="Process YouTube video to extract topics, questions, and generate ELI5 answers")
 async def youtube_summarizer(
@@ -185,61 +210,60 @@ async def youtube_summarizer(
     # Step 1: Get video info
     video_info = await ctx.transcribe_youtube(url=url)
 
-    if "error" in video_info:
+    if video_info.error:
         builder = MessageBuilder(policy="youtube_summarizer")
-        builder.add_text(f"Error: {video_info['error']}")
+        builder.add_text(f"Error: {video_info.error}")
         return [builder.to_message()]
-    
-    print(f"Video: {video_info['title']}")
-    print(f"Transcript length: {len(video_info['transcript'])} chars")
-    
+
+    print(f"Video: {video_info.title}")
+    print(f"Transcript length: {len(video_info.transcript)} chars")
+
     # Step 2: Extract topics and questions
     print("\n--- Extracting topics and questions ---")
     topics_data = await ctx.extract_topics(
-        title=video_info["title"],
-        transcript=video_info["transcript"]
+        title=video_info.title,
+        transcript=video_info.transcript
     )
-    topics = topics_data.get("topics", [])
+    topics = topics_data.topics
     print(f"Found {len(topics)} topics")
-    
+
     # Step 3: Process each topic concurrently
     print("\n--- Processing topics ---")
-    
+
     # Create tasks for all topics with questions
     tasks = []
     topic_indices = []
     for i, topic in enumerate(topics):
-        questions = [q for q in topic.get("questions", [])]
-        if not questions:
+        if not topic.questions:
             continue
-        
-        print(f"Queuing topic {i+1}/{len(topics)}: {topic['title']}")
+
+        print(f"Queuing topic {i+1}/{len(topics)}: {topic.title}")
         tasks.append(ctx.process_topic(
-            topic_title=topic["title"],
-            questions=questions,
-            transcript=video_info["transcript"]
+            topic_title=topic.title,
+            questions=topic.questions,
+            transcript=video_info.transcript
         ))
         topic_indices.append(i)
     
     # Execute all tasks concurrently
     results = await asyncio.gather(*tasks)
-    
+
     # Build processed topics list
     processed_topics = []
     for i, processed in zip(topic_indices, results):
         processed_topics.append({
-            "original_title": topics[i]["title"],
-            "rephrased_title": processed["rephrased_title"],
-            "questions": processed["questions"]
+            "original_title": topics[i].title,
+            "rephrased_title": processed.rephrased_title,
+            "questions": processed.questions
         })
-    
+
     # Step 4: Format output
     print("\n--- Generating Summary ---")
     output = f"""
-# {video_info['title']}
+# {video_info.title}
 
-**Video ID**: {video_info['video_id']}
-**Thumbnail**: {video_info['thumbnail_url']}
+**Video ID**: {video_info.video_id}
+**Thumbnail**: {video_info.thumbnail_url}
 
 ---
 
@@ -247,8 +271,8 @@ async def youtube_summarizer(
     for topic in processed_topics:
         output += f"## {topic['rephrased_title']}\n\n"
         for q in topic['questions']:
-            output += f"### {q.get('rephrased', q.get('original', ''))}\n\n"
-            output += f"{q.get('answer', '')}\n\n"
+            output += f"### {q.rephrased}\n\n"
+            output += f"{q.answer}\n\n"
     
     print("\n" + "=" * 50)
     print("Processing completed successfully!")

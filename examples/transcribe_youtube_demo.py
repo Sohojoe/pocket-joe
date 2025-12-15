@@ -26,16 +26,16 @@ async def main():
 
     info = await ctx.transcribe_youtube(url=url)
 
-    if "error" in info:
-        print(f"Error: {info['error']}")
+    if info.error:
+        print(f"Error: {info.error}")
         return
 
-    print(f"Video: {info.get('title', 'Unknown')}")
-    print(f"Video ID: {info.get('video_id', 'Unknown')}")
-    print(f"Thumbnail: {info.get('thumbnail_url', 'Unknown')}")
-    print(f"Transcript length: {len(info.get('transcript', ''))} chars")
+    print(f"Video: {info.title}")
+    print(f"Video ID: {info.video_id}")
+    print(f"Thumbnail: {info.thumbnail_url}")
+    print(f"Transcript length: {len(info.transcript)} chars")
     print(f"\nFull transcript:")
-    print(info.get('transcript', ''))
+    print(info.transcript)
 
 
 if __name__ == "__main__":

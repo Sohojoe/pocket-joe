@@ -53,19 +53,29 @@ async def web_search_policy(query: str) -> str:
     return "\n\n".join([f"Title: {r['title']}\nURL: {r['href']}\nSnippet: {r['body']}" for r in results])
 ```
 
-A policy returning structured data:
+A policy returning structured data with Pydantic:
 
 ```python
+from pydantic import BaseModel
+
+class TranscriptResult(BaseModel):
+    title: str
+    transcript: str
+    thumbnail_url: str
+    video_id: str
+    error: str | None = None
+
 @policy.tool(description="Transcribe YouTube video")
-async def transcribe_youtube_policy(url: str) -> dict[str, str]:
+async def transcribe_youtube_policy(url: str) -> TranscriptResult:
     """Get video title, transcript and metadata from YouTube URL."""
     video_id = _extract_video_id(url)
     transcript = YouTubeTranscriptApi().fetch(video_id)
-    return {
-        "title": title,
-        "transcript": " ".join([snippet.text for snippet in transcript]),
-        "video_id": video_id
-    }
+    return TranscriptResult(
+        title=title,
+        transcript=" ".join([snippet.text for snippet in transcript]),
+        thumbnail_url=f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+        video_id=video_id
+    )
 ```
 
 An orchestrator policy that coordinates LLM + search:
@@ -124,7 +134,7 @@ async def main():
 **Why this matters:**
 
 - **Universal Composability:** Decorate any function - it works like FastAPI/FastMCP endpoints
-- **Flexible Return Types:** Return primitives (str, dict, list), or list[Message] for complex flows
+- **Flexible Return Types:** Return primitives (str), Pydantic models, or list[Message] for complex flows
 - **Auto-wrapping:** Framework automatically wraps results in OptionResultPayload when called as options
 - **Type-safe:** Full IDE support with typed context and message payloads
 - **Evolution-friendly:** Start simple (primitives) → add complexity (messages) with no refactoring
