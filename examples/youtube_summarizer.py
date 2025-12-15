@@ -283,13 +283,11 @@ async def main():
     result = await ctx.youtube_summarizer(url=url)
     
     # Print summary
-    last_msg = result[-1]
-    if last_msg.parts:
-        text_parts = [p for p in last_msg.parts if isinstance(p, TextPart)]
-        output_text = text_parts[0].text if text_parts else ""
-        print("\n" + output_text)
-    
-        # Optionally save to file
+    output_text = str(result[-1])
+    print("\n" + output_text)
+
+    # Optionally save to file
+    if output_text:
         with open("youtube_summary.md", "w") as f:
             f.write(output_text)
         print("\nSummary saved to youtube_summary.md")

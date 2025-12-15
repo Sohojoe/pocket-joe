@@ -116,12 +116,9 @@ async def main():
     ctx = AppContext(runner)
     result = await ctx.search_agent(prompt="What is the latest Python version?")
 
-    # Get final text message
-    final_msg = next((msg for msg in reversed(result) if msg.parts), None)
-    if final_msg and final_msg.parts:
-        text_parts = [p for p in final_msg.parts if isinstance(p, TextPart)]
-        if text_parts:
-            print(f"\nFinal Result: {text_parts[0].text}")
+    # Get final text message (Message.__str__ extracts text automatically)
+    final_msg = next((msg for msg in reversed(result) if msg.parts), '')
+    print(f"\nFinal Result: {final_msg}")
 ```
 
 **Why this matters:**

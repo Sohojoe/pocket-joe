@@ -126,6 +126,13 @@ class Message(BaseModel):
         if self.parts is None and self.payload is None:
             raise ValueError("Message must have either parts or payload")
 
+    def __str__(self) -> str:
+        """Return text content of message if available, empty string otherwise."""
+        if self.parts:
+            text_parts = [p.text for p in self.parts if isinstance(p, TextPart)]
+            return " ".join(text_parts)
+        return ""
+
 
 # ============================================================================
 # Message Builders

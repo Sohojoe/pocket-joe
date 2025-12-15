@@ -72,12 +72,8 @@ async def main():
     result = await ctx.search_agent(prompt="What is the latest Python version?")
 
     # Get final text message
-    final_msg = next((msg for msg in reversed(result) if msg.parts), None)
-    if final_msg and final_msg.parts:
-        from pocket_joe import TextPart
-        text_parts = [p for p in final_msg.parts if isinstance(p, TextPart)]
-        if text_parts:
-            print(f"\nFinal Result: {text_parts[0].text}")
+    final_msg = next((msg for msg in reversed(result) if msg.parts), '')
+    print(f"\nFinal Result: {final_msg}")
     print("--- Demo Complete ---")
 
 if __name__ == "__main__":
