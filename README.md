@@ -29,18 +29,23 @@ In LLM APIs, everything is a `Message`. We adopt this as our universal unit:
 
 **Universal Return Types:** Policies can return any JSON-serializable type - the framework automatically wraps results when called as options.
 
-An LLM policy that can call other policies:
+An LLM policy using the adapter pattern:
 
 ```python
-@policy.tool(description="Calls LLM with tool support")
-async def openai_llm_policy_v1(observations: list[Message], options: list[OptionSchema]) -> list[Message]:
-    """LLM policy that calls OpenAI GPT-4 with tool support."""
-    openai = AsyncOpenAI()
-    response = await openai.chat.completions.create(
-        model="gpt-4",
-        messages=observations_to_completions_messages(observations),
-        tools=options_to_completions_tools(options))
-    return completions_response_to_messages(response)
+@policy.tool(description="OpenAI-compatible chat completions")
+async def llm_policy(
+    observations: list[Message],
+    options: list[OptionSchema] | None = None,
+) -> list[Message]:
+    """Call chat completions API and return option_call or text messages."""
+    adapter = CompletionsAdapter(observations, options)
+    client = CompletionsAdapter.client()
+    response = await client.chat.completions.create(
+        model="gpt-4o",
+        messages=adapter.messages,
+        tools=adapter.tools or [],
+    )
+    return adapter.decode(response, policy="llm_policy")
 ```
 
 A simple helper policy returning primitives:
@@ -113,7 +118,7 @@ Use `AppContext` for registry (gives IDE type hints):
 class AppContext(BaseContext):
     def __init__(self, runner):
         super().__init__(runner)
-        self.llm = self._bind(openai_llm_policy_v1)
+        self.llm = self._bind(llm_policy)
         self.web_search = self._bind(web_seatch_ddgs_policy)
         self.search_agent = self._bind(search_agent)
 ```

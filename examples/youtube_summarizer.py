@@ -1,6 +1,7 @@
 """port of https://github.com/The-Pocket/PocketFlow-Tutorial-Youtube-Made-Simple"""
 
 import asyncio
+import os
 import yaml
 from pydantic import BaseModel
 
@@ -11,8 +12,9 @@ from pocket_joe import (
     InMemoryRunner,
     MessageBuilder,
     TextPart,
+    OptionSchema,
 )
-from examples.utils import openai_llm_policy_v1, transcribe_youtube_policy
+from examples.utils import CompletionsAdapter, transcribe_youtube_policy
 
 
 # --- Pydantic Models ---
@@ -40,6 +42,34 @@ class ProcessTopicResult(BaseModel):
     questions: list[ProcessedQuestion]
 
 
+# --- LLM Policy ---
+@policy.tool(description="OpenAI-compatible chat completions")
+async def llm_policy(
+    observations: list[Message],
+    options: list[OptionSchema] | None = None,
+) -> list[Message]:
+    """Call chat completions API and return option_call or text messages.
+
+    Args:
+        observations: Conversation history as pocket-joe Messages.
+        options: Optional list of OptionSchema for tool/function calling.
+
+    Returns:
+        List of Messages containing text and/or option_call payloads.
+    """
+    adapter = CompletionsAdapter(observations, options)
+    client = CompletionsAdapter.client(
+        api_key=os.getenv("OPENROUTER_API_KEY"),
+        base_url="https://openrouter.ai/api/v1",
+    )
+    response = await client.chat.completions.create(
+        model="google/gemini-2.0-flash-001",
+        messages=adapter.messages,  # type: ignore[arg-type]
+        tools=adapter.tools or [],  # type: ignore[arg-type]
+    )
+    return adapter.decode(response, policy="llm_policy")
+
+
 # --- Policies ---
 @policy.tool(description="Extract interesting topics and questions from YouTube transcript")
 async def extract_topics_policy(
@@ -47,13 +77,13 @@ async def extract_topics_policy(
     transcript: str,
 ) -> ExtractTopicsResult:
     """Extract interesting topics and generate questions from transcript.
-    
+
     Args:
-        title: Video title
-        transcript: Video transcript
+        title: Video title.
+        transcript: Video transcript text.
 
     Returns:
-        List containing a single Message with payload containing topics array
+        ExtractTopicsResult containing up to 5 topics with questions.
     """
     prompt = f"""
 You are an expert content analyzer. Given a YouTube video transcript, identify at most 5 most interesting topics discussed and generate at most 3 most thought-provoking questions for each topic.
@@ -114,16 +144,15 @@ async def process_topic_policy(
     questions: list[str],
     transcript: str,
 ) -> ProcessTopicResult:
-    """
-    Rephrase topic title and questions, generate simple answers.
-    
+    """Rephrase topic title and questions, generate simple answers.
+
     Args:
-        topic_title: Original topic title
-        questions: List of questions about the topic
-        transcript: Video transcript for context
+        topic_title: Original topic title.
+        questions: List of questions about the topic.
+        transcript: Video transcript for context.
 
     Returns:
-        List containing a single Message with rephrased topic and Q&A pairs
+        ProcessTopicResult with rephrased title and Q&A pairs.
     """
     prompt = f"""You are a content analyst. Given a topic and questions from a YouTube video, rephrase them to be clear and concise, then provide accurate, informative answers.
 
@@ -194,14 +223,13 @@ questions:
 async def youtube_summarizer(
     url: str,
 ) -> list[Message]:
-    """
-    Process YouTube video to extract topics, questions, and generate ELI5 answers.
-    
+    """Process YouTube video to extract topics, questions, and generate ELI5 answers.
+
     Args:
-        url: YouTube video URL
+        url: YouTube video URL.
 
     Returns:
-        List containing Messages with video metadata and processed topics with Q&A
+        List of Messages with formatted markdown summary.
     """
     print(f"\n--- Processing YouTube URL: {url} ---")
     
@@ -287,7 +315,7 @@ async def youtube_summarizer(
 class AppContext(BaseContext):
     def __init__(self, runner):
         super().__init__(runner)
-        self.llm = self._bind(openai_llm_policy_v1)
+        self.llm = self._bind(llm_policy)
         self.transcribe_youtube = self._bind(transcribe_youtube_policy)
         self.extract_topics = self._bind(extract_topics_policy)
         self.process_topic = self._bind(process_topic_policy)

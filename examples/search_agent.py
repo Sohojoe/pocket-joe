@@ -1,4 +1,5 @@
 import asyncio
+import os
 from pocket_joe import (
     Message,
     policy,
@@ -7,8 +8,37 @@ from pocket_joe import (
     OptionSchema,
     MessageBuilder,
     OptionCallPayload,
+)
+from examples.utils import CompletionsAdapter, web_seatch_ddgs_policy
+
+
+# --- LLM Policy ---
+@policy.tool(description="OpenAI-compatible chat completions")
+async def llm_policy(
+    observations: list[Message],
+    options: list[OptionSchema] | None = None,
+) -> list[Message]:
+    """Call chat completions API and return option_call or text messages.
+
+    Args:
+        observations: Conversation history as pocket-joe Messages.
+        options: Optional list of OptionSchema for tool/function calling.
+
+    Returns:
+        List of Messages containing text and/or option_call payloads.
+    """
+    adapter = CompletionsAdapter(observations, options)
+    client = CompletionsAdapter.client(
+        api_key=os.getenv("OPENROUTER_API_KEY"),
+        base_url="https://openrouter.ai/api/v1",
     )
-from examples.utils import openai_llm_policy_v1, web_seatch_ddgs_policy
+    response = await client.chat.completions.create(
+        model="google/gemini-2.0-flash-001",
+        messages=adapter.messages,  # type: ignore[arg-type]
+        tools=adapter.tools or [],  # type: ignore[arg-type]
+    )
+    return adapter.decode(response, policy="llm_policy")
+
 
 # --- Tools ---
 @policy.tool(description="Orchestrates LLM with web search tool")
@@ -16,15 +46,14 @@ async def search_agent(
     prompt: str,
     max_iterations: int = 3,
 ) -> list[Message]:
-    """
-    Orchestrator that gives the LLM access to web search.
+    """Orchestrator that gives the LLM access to web search.
 
     Args:
-        prompt: The user prompt to process
-        max_iterations: Maximum number of iterations to run
+        prompt: The user prompt to process.
+        max_iterations: Maximum number of iterations to run.
 
     Returns:
-        List of Messages containing the conversation history with search results and final answer
+        List of Messages containing conversation history with search results.
     """
 
     system_builder = MessageBuilder(policy="system", role_hint_for_llm="system")
@@ -45,7 +74,7 @@ async def search_agent(
         selected_actions = await ctx.llm(
             observations=history,
             options=OptionSchema.from_func([ctx.web_search])
-            )
+        )
         history.extend(selected_actions)
         # stop if no option calls
         if not any(msg.payload and isinstance(msg.payload, OptionCallPayload) for msg in selected_actions):
@@ -53,14 +82,16 @@ async def search_agent(
 
     return history
 
+
 # --- App Context ---
 class AppContext(BaseContext):
 
     def __init__(self, runner):
         super().__init__(runner)
-        self.llm = self._bind(openai_llm_policy_v1)
+        self.llm = self._bind(llm_policy)
         self.web_search = self._bind(web_seatch_ddgs_policy)
         self.search_agent = self._bind(search_agent)
+
 
 # --- Main Execution ---
 
@@ -75,6 +106,7 @@ async def main():
     final_msg = next((msg for msg in reversed(result) if msg.parts), '')
     print(f"\nFinal Result: {final_msg}")
     print("--- Demo Complete ---")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
