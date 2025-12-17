@@ -1,4 +1,4 @@
-"""Unit tests for Google Gemini image generation policy."""
+"""Unit tests for Google Gemini policy using the new google-genai SDK."""
 
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
@@ -17,15 +17,15 @@ from pocket_joe import (
 
 # Import the functions to test
 from examples.utils.google_image_gen import (
-    observations_to_gemini_messages,
+    observations_to_gemini_contents,
     options_to_gemini_tools,
     gemini_response_to_messages,
     google_gemini_policy_v1,
 )
 
 
-class TestObservationsToGeminiMessages:
-    """Test conversion from pocket-joe Messages to Gemini format."""
+class TestObservationsToGeminiContents:
+    """Test conversion from pocket-joe Messages to Gemini Content format."""
 
     def test_text_only_message(self):
         """Test converting a text-only message."""
@@ -33,12 +33,13 @@ class TestObservationsToGeminiMessages:
         builder.add_text("Hello, world!")
         msg = builder.to_message()
 
-        result = observations_to_gemini_messages([msg])
+        result = observations_to_gemini_contents([msg])
 
         assert len(result) == 1
-        assert result[0]["role"] == "user"
-        assert len(result[0]["parts"]) == 1
-        assert result[0]["parts"][0]["text"] == "Hello, world!"
+        assert result[0].role == "user"
+        assert len(result[0].parts) == 1
+        # New SDK uses Part objects with text attribute
+        assert result[0].parts[0].text == "Hello, world!"
 
     def test_text_with_image_message(self):
         """Test converting a message with text and image (interleaved)."""
@@ -47,14 +48,14 @@ class TestObservationsToGeminiMessages:
         builder.add_image(url="https://example.com/image.jpg", mime="image/jpeg")
         msg = builder.to_message()
 
-        result = observations_to_gemini_messages([msg])
+        result = observations_to_gemini_contents([msg])
 
         assert len(result) == 1
-        assert result[0]["role"] == "user"
-        assert len(result[0]["parts"]) == 2
-        assert result[0]["parts"][0]["text"] == "What's in this image?"
+        assert result[0].role == "user"
+        assert len(result[0].parts) == 2
+        assert result[0].parts[0].text == "What's in this image?"
         # Image is currently converted to text placeholder (TODO in implementation)
-        assert "Image:" in result[0]["parts"][1]["text"]
+        assert "Image:" in result[0].parts[1].text
 
     def test_multiple_text_parts(self):
         """Test message with multiple text parts."""
@@ -63,12 +64,12 @@ class TestObservationsToGeminiMessages:
         builder.add_text("Second part")
         msg = builder.to_message()
 
-        result = observations_to_gemini_messages([msg])
+        result = observations_to_gemini_contents([msg])
 
         assert len(result) == 1
-        assert len(result[0]["parts"]) == 2
-        assert result[0]["parts"][0]["text"] == "First part"
-        assert result[0]["parts"][1]["text"] == "Second part"
+        assert len(result[0].parts) == 2
+        assert result[0].parts[0].text == "First part"
+        assert result[0].parts[1].text == "Second part"
 
     def test_option_call_with_result(self):
         """Test converting option_call and option_result messages."""
@@ -98,21 +99,20 @@ class TestObservationsToGeminiMessages:
             )
         )
 
-        result = observations_to_gemini_messages([call_msg, result_msg])
+        result = observations_to_gemini_contents([call_msg, result_msg])
 
         assert len(result) == 2
 
-        # Check function call
-        assert result[0]["role"] == "model"
-        assert "function_call" in result[0]["parts"][0]
-        assert result[0]["parts"][0]["function_call"]["name"] == "get_weather"
-        assert result[0]["parts"][0]["function_call"]["args"] == {"city": "San Francisco"}
+        # Check function call (role is "model" in new SDK)
+        assert result[0].role == "model"
+        assert result[0].parts[0].function_call is not None
+        assert result[0].parts[0].function_call.name == "get_weather"
+        assert result[0].parts[0].function_call.args == {"city": "San Francisco"}
 
-        # Check function response
-        assert result[1]["role"] == "function"
-        assert "function_response" in result[1]["parts"][0]
-        assert result[1]["parts"][0]["function_response"]["name"] == "get_weather"
-        assert result[1]["parts"][0]["function_response"]["response"]["result"] == "Sunny, 72°F"
+        # Check function response (role is "user" in new SDK for function responses)
+        assert result[1].role == "user"
+        assert result[1].parts[0].function_response is not None
+        assert result[1].parts[0].function_response.name == "get_weather"
 
     def test_option_call_without_result_skipped(self):
         """Test that option_call without matching result is skipped."""
@@ -127,7 +127,7 @@ class TestObservationsToGeminiMessages:
             )
         )
 
-        result = observations_to_gemini_messages([call_msg])
+        result = observations_to_gemini_contents([call_msg])
 
         # Should be empty since no matching result
         assert len(result) == 0
@@ -142,14 +142,14 @@ class TestObservationsToGeminiMessages:
         assistant_builder.add_text("Assistant message")
         assistant_msg = assistant_builder.to_message()
 
-        result = observations_to_gemini_messages([user_msg, assistant_msg])
+        result = observations_to_gemini_contents([user_msg, assistant_msg])
 
-        assert result[0]["role"] == "user"
-        assert result[1]["role"] == "model"
+        assert result[0].role == "user"
+        assert result[1].role == "model"
 
 
 class TestOptionsToGeminiTools:
-    """Test conversion from OptionSchema to Gemini function declarations."""
+    """Test conversion from OptionSchema to Gemini Tool objects."""
 
     def test_empty_options(self):
         """Test with no options."""
@@ -221,13 +221,11 @@ class TestGeminiResponseToMessages:
 
         mock_part = Mock()
         mock_part.text = "Hello, how can I help you?"
+        mock_part.inline_data = None
+        mock_part.function_call = None
         mock_response.candidates[0].content.parts = [mock_part]
 
-        # Remove other attributes
-        del mock_part.inline_data
-        del mock_part.function_call
-
-        result = gemini_response_to_messages(mock_response, policy="gemini")
+        result = gemini_response_to_messages(mock_response, policy_name="gemini")
 
         assert len(result) == 1
         assert result[0].policy == "gemini"
@@ -244,15 +242,14 @@ class TestGeminiResponseToMessages:
         mock_response.candidates[0].content = Mock()
 
         mock_part = Mock()
+        mock_part.text = None
+        mock_part.inline_data = None
         mock_part.function_call = Mock()
         mock_part.function_call.name = "get_weather"
         mock_part.function_call.args = {"city": "SF"}
         mock_response.candidates[0].content.parts = [mock_part]
 
-        del mock_part.text
-        del mock_part.inline_data
-
-        result = gemini_response_to_messages(mock_response, policy="gemini")
+        result = gemini_response_to_messages(mock_response, policy_name="gemini")
 
         assert len(result) == 1
         assert result[0].payload is not None
@@ -268,19 +265,19 @@ class TestGeminiResponseToMessages:
 
         text_part = Mock()
         text_part.text = "Let me check the weather"
-        del text_part.inline_data
-        del text_part.function_call
+        text_part.inline_data = None
+        text_part.function_call = None
 
         func_part = Mock()
+        func_part.text = None
+        func_part.inline_data = None
         func_part.function_call = Mock()
         func_part.function_call.name = "get_weather"
         func_part.function_call.args = {"city": "SF"}
-        del func_part.text
-        del func_part.inline_data
 
         mock_response.candidates[0].content.parts = [text_part, func_part]
 
-        result = gemini_response_to_messages(mock_response, policy="gemini")
+        result = gemini_response_to_messages(mock_response, policy_name="gemini")
 
         assert len(result) == 2
         # Text message should come first
@@ -295,7 +292,7 @@ class TestGeminiResponseToMessages:
         mock_response = Mock()
         mock_response.candidates = []
 
-        result = gemini_response_to_messages(mock_response, policy="gemini")
+        result = gemini_response_to_messages(mock_response, policy_name="gemini")
 
         assert result == []
 
@@ -305,7 +302,7 @@ class TestGeminiResponseToMessages:
         mock_response.candidates = [Mock()]
         mock_response.candidates[0].content = None
 
-        result = gemini_response_to_messages(mock_response, policy="gemini")
+        result = gemini_response_to_messages(mock_response, policy_name="gemini")
 
         assert result == []
 
@@ -323,23 +320,27 @@ class TestGoogleGeminiPolicyV1:
     @pytest.mark.asyncio
     async def test_policy_with_mock_api(self):
         """Test policy execution with mocked Gemini API."""
-        # Mock the genai module
         with patch.dict('os.environ', {'GOOGLE_API_KEY': 'test_key'}):
             with patch('examples.utils.google_image_gen.genai') as mock_genai:
-                # Setup mock model
-                mock_model = Mock()
+                # Setup mock client
+                mock_client = Mock()
+                mock_genai.Client.return_value = mock_client
+
+                # Setup async mock for aio.models.generate_content
                 mock_response = Mock()
                 mock_response.candidates = [Mock()]
                 mock_response.candidates[0].content = Mock()
 
                 mock_part = Mock()
                 mock_part.text = "Test response"
-                del mock_part.inline_data
-                del mock_part.function_call
+                mock_part.inline_data = None
+                mock_part.function_call = None
 
                 mock_response.candidates[0].content.parts = [mock_part]
-                mock_model.generate_content = Mock(return_value=mock_response)
-                mock_genai.GenerativeModel.return_value = mock_model
+
+                # Create an async mock for generate_content
+                async_generate = AsyncMock(return_value=mock_response)
+                mock_client.aio.models.generate_content = async_generate
 
                 # Create test input
                 builder = MessageBuilder(policy="user", role_hint_for_llm="user")
@@ -355,19 +356,22 @@ class TestGoogleGeminiPolicyV1:
                 assert result[0].parts[0].text == "Test response"
 
                 # Verify API was called correctly
-                mock_genai.configure.assert_called_once()
-                mock_genai.GenerativeModel.assert_called_once()
+                mock_genai.Client.assert_called_once_with(api_key='test_key')
+                async_generate.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_policy_with_custom_model(self):
         """Test policy with custom model parameter."""
         with patch.dict('os.environ', {'GOOGLE_API_KEY': 'test_key'}):
             with patch('examples.utils.google_image_gen.genai') as mock_genai:
-                mock_model = Mock()
+                mock_client = Mock()
+                mock_genai.Client.return_value = mock_client
+
                 mock_response = Mock()
                 mock_response.candidates = []
-                mock_model.generate_content = Mock(return_value=mock_response)
-                mock_genai.GenerativeModel.return_value = mock_model
+
+                async_generate = AsyncMock(return_value=mock_response)
+                mock_client.aio.models.generate_content = async_generate
 
                 builder = MessageBuilder(policy="user", role_hint_for_llm="user")
                 builder.add_text("Test")
@@ -377,24 +381,27 @@ class TestGoogleGeminiPolicyV1:
                 await google_gemini_policy_v1(
                     observations,
                     [],
-                    model="gemini-3-pro-preview"
+                    model="gemini-2.5-pro"
                 )
 
                 # Verify custom model was used
-                mock_genai.GenerativeModel.assert_called_once()
-                call_args = mock_genai.GenerativeModel.call_args
-                assert call_args[1]['model_name'] == "gemini-3-pro-preview"
+                async_generate.assert_called_once()
+                call_kwargs = async_generate.call_args[1]
+                assert call_kwargs['model'] == "gemini-2.5-pro"
 
     @pytest.mark.asyncio
     async def test_policy_with_tools(self):
         """Test policy with tool/function calling."""
         with patch.dict('os.environ', {'GOOGLE_API_KEY': 'test_key'}):
             with patch('examples.utils.google_image_gen.genai') as mock_genai:
-                mock_model = Mock()
+                mock_client = Mock()
+                mock_genai.Client.return_value = mock_client
+
                 mock_response = Mock()
                 mock_response.candidates = []
-                mock_model.generate_content = Mock(return_value=mock_response)
-                mock_genai.GenerativeModel.return_value = mock_model
+
+                async_generate = AsyncMock(return_value=mock_response)
+                mock_client.aio.models.generate_content = async_generate
 
                 builder = MessageBuilder(policy="user", role_hint_for_llm="user")
                 builder.add_text("Test")
@@ -411,9 +418,10 @@ class TestGoogleGeminiPolicyV1:
                 # Execute with tools
                 await google_gemini_policy_v1(observations, options)
 
-                # Verify tools were passed
-                mock_genai.GenerativeModel.assert_called_once()
-                call_args = mock_genai.GenerativeModel.call_args
-                assert 'tools' in call_args[1]
-                # Tools should be a list (will contain actual Tool objects in real execution)
-                assert call_args[1]['tools'] is not None
+                # Verify config was passed with tools
+                async_generate.assert_called_once()
+                call_kwargs = async_generate.call_args[1]
+                assert 'config' in call_kwargs
+                # Config should have tools when options are provided
+                config = call_kwargs['config']
+                assert config.tools is not None

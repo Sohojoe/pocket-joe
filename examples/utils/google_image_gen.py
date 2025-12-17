@@ -1,11 +1,12 @@
 """
-Google Gemini image generation policy for PocketJoe.
+Google Gemini policy for PocketJoe using the new google-genai SDK.
 This is NOT part of the core pocket-joe package.
 Users should copy and customize this for their needs.
 
-Requirements: google-generativeai
+Requirements: google-genai (NOT the deprecated google-generativeai)
+Install with: pip install google-genai
 """
-import json
+import base64
 import os
 from typing import Any
 import uuid
@@ -20,16 +21,19 @@ from pocket_joe import (
 )
 
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
 except ImportError:
     raise ImportError(
-        "google-generativeai is required for this policy. "
-        "Install it with: pip install google-generativeai"
+        "google-genai is required for this policy. "
+        "Install it with: pip install google-genai"
     )
 
 
-def observations_to_gemini_messages(in_msgs: list[Message]) -> list[dict[str, Any]]:
-    """Convert pocket-joe Message list to Gemini API message format.
+def observations_to_gemini_contents(
+    in_msgs: list[Message],
+) -> list[types.Content]:
+    """Convert pocket-joe Message list to Gemini API Content format.
 
     Adapts framework messages to Google's Gemini format, properly handling
     the interweaving of text and images within messages.
@@ -38,42 +42,31 @@ def observations_to_gemini_messages(in_msgs: list[Message]) -> list[dict[str, An
         in_msgs: List of Messages from the conversation history
 
     Returns:
-        List of dicts in Gemini format with roles and parts
+        List of types.Content objects for the new genai SDK
     """
     # Build mapping of invocation_id -> option_result
-    tool_results = dict[str, Message]()
+    tool_results: dict[str, Message] = {}
     for msg in in_msgs:
         if msg.payload and isinstance(msg.payload, OptionResultPayload):
             tool_results[msg.payload.invocation_id] = msg
 
-    messages = []
+    contents: list[types.Content] = []
+
     for msg in in_msgs:
-        # Handle parts messages (text + media) - key for interweaving!
+        # Handle parts messages (text + media)
         if msg.parts:
-            # Gemini supports interleaved content parts
-            parts = []
+            parts: list[types.Part] = []
             for part in msg.parts:
                 if isinstance(part, TextPart):
-                    parts.append({"text": part.text})
+                    parts.append(types.Part.from_text(text=part.text))
                 elif isinstance(part, MediaPart):
-                    # For images, we need to handle URLs or inline data
-                    # Gemini expects inline_data format for images
                     if part.modality == "image":
-                        # Note: In production, you'd fetch the image from the URL
-                        # and convert to base64. For now, we'll include URL in text
-                        parts.append({
-                            "text": f"[Image: {part.url}]"
-                        })
-                        # TODO: Implement proper image fetching and conversion
-                        # parts.append({
-                        #     "inline_data": {
-                        #         "mime_type": part.mime or "image/jpeg",
-                        #         "data": base64_image_data
-                        #     }
-                        # })
+                        # For URLs, include as text reference for now
+                        # TODO: Fetch and convert to bytes for inline_data
+                        parts.append(types.Part.from_text(text=f"[Image: {part.url}]"))
 
             role = "user" if msg.role_hint_for_llm == "user" else "model"
-            messages.append({"role": role, "parts": parts})
+            contents.append(types.Content(role=role, parts=parts))
 
         # Handle option_call messages
         elif msg.payload and isinstance(msg.payload, OptionCallPayload):
@@ -84,86 +77,79 @@ def observations_to_gemini_messages(in_msgs: list[Message]) -> list[dict[str, An
             if invocation_id not in tool_results:
                 continue
 
-            # Gemini function calling format
-            messages.append({
-                "role": "model",
-                "parts": [{
-                    "function_call": {
-                        "name": call_payload.option_name,
-                        "args": call_payload.arguments
-                    }
-                }]
-            })
+            # Function call from model
+            contents.append(types.Content(
+                role="model",
+                parts=[types.Part.from_function_call(
+                    name=call_payload.option_name,
+                    args=call_payload.arguments
+                )]
+            ))
 
+            # Function response
             result_msg = tool_results[invocation_id]
             result_payload = result_msg.payload
             if isinstance(result_payload, OptionResultPayload):
-                # Serialize result
                 result = result_payload.result
                 if isinstance(result, str):
                     response = {"result": result}
                 else:
                     response = result if isinstance(result, dict) else {"result": result}
 
-                messages.append({
-                    "role": "function",
-                    "parts": [{
-                        "function_response": {
-                            "name": call_payload.option_name,
-                            "response": response
-                        }
-                    }]
-                })
+                contents.append(types.Content(
+                    role="user",
+                    parts=[types.Part.from_function_response(
+                        name=call_payload.option_name,
+                        response=response
+                    )]
+                ))
 
-    return messages
+    return contents
 
 
-def options_to_gemini_tools(options: list[OptionSchema] | None) -> list[Any] | None:
-    """Convert OptionSchema list to Gemini function declarations.
+def options_to_gemini_tools(
+    options: list[OptionSchema] | None,
+) -> list[types.Tool] | None:
+    """Convert OptionSchema list to Gemini Tool objects.
 
     Args:
         options: List of OptionSchema objects containing tool metadata
 
     Returns:
-        List of genai.types.Tool objects for Gemini, or None if no options
+        List of types.Tool objects for Gemini, or None if no options
     """
     if not options:
         return None
 
-    from google.generativeai.types import FunctionDeclaration, Tool  # type: ignore[attr-defined]
-
-    function_declarations = []
+    function_declarations: list[types.FunctionDeclaration] = []
     for option in options:
-        # Create FunctionDeclaration for each option
-        # Type ignores needed due to incomplete type stubs in google-generativeai
-        func_decl = FunctionDeclaration(  # type: ignore[call-arg]
+        # Use parameters_json_schema for JSON schema dicts
+        func_decl = types.FunctionDeclaration(
             name=option.name,
-            description=option.description,  # type: ignore[arg-type]
-            parameters=option.parameters if option.parameters else None
+            description=option.description or "",
+            parameters_json_schema=option.parameters if option.parameters else None,
         )
         function_declarations.append(func_decl)
 
-    # Wrap in a Tool object
-    return [Tool(function_declarations=function_declarations)]  # type: ignore[call-arg]
+    return [types.Tool(function_declarations=function_declarations)]
 
 
 def gemini_response_to_messages(
-    response: Any,
-    policy: str = "google_gemini"
+    response: types.GenerateContentResponse,
+    policy_name: str = "google_gemini",
 ) -> list[Message]:
     """Convert Gemini API response to pocket-joe Messages.
 
-    Handles both text/image content and function calls, properly interweaving
-    them using MessageBuilder.
+    Handles both text/image content and function calls.
 
     Args:
         response: GenerateContentResponse from Gemini API
-        policy: Policy name for the messages
+        policy_name: Policy name for the messages
 
     Returns:
         List of Messages containing text/images and/or option_call messages
     """
-    new_messages = []
+    new_messages: list[Message] = []
 
     if not response.candidates:
         return new_messages
@@ -175,34 +161,34 @@ def gemini_response_to_messages(
 
     # Track if we have text/media parts vs function calls
     has_content_parts = False
-    builder = MessageBuilder(policy=policy, role_hint_for_llm="assistant")
+    builder = MessageBuilder(policy=policy_name, role_hint_for_llm="assistant")
 
     for part in candidate.content.parts:
         # Handle text parts
-        if hasattr(part, 'text') and part.text:
+        if part.text:
             builder.add_text(part.text)
             has_content_parts = True
 
-        # Handle inline images in response (if Gemini ever returns them)
-        elif hasattr(part, 'inline_data') and part.inline_data:
-            # Convert inline data to data URL
-            mime_type = part.inline_data.mime_type
-            data = part.inline_data.data
-            data_url = f"data:{mime_type};base64,{data}"
+        # Handle inline images in response
+        elif part.inline_data and part.inline_data.data:
+            mime_type = part.inline_data.mime_type or "image/jpeg"
+            # Convert bytes to base64 data URL
+            data_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
+            data_url = f"data:{mime_type};base64,{data_b64}"
             builder.add_image(url=data_url, mime=mime_type)
             has_content_parts = True
 
         # Handle function calls
-        elif hasattr(part, 'function_call') and part.function_call:
+        elif part.function_call and part.function_call.name:
             fc = part.function_call
             new_messages.append(Message(
                 id=str(uuid.uuid4()),
-                policy=policy,
+                policy=policy_name,
                 role_hint_for_llm="assistant",
                 payload=OptionCallPayload(
                     invocation_id=str(uuid.uuid4()),
-                    option_name=fc.name,
-                    arguments=dict(fc.args)
+                    option_name=fc.name,  # type: ignore[arg-type]  # Checked above
+                    arguments=dict(fc.args) if fc.args else {}
                 )
             ))
 
@@ -217,57 +203,57 @@ def gemini_response_to_messages(
 async def google_gemini_policy_v1(
     observations: list[Message],
     options: list[OptionSchema],
-    model: str = "gemini-2.5-flash-image"
+    model: str = "gemini-2.5-flash",
 ) -> list[Message]:
     """Gemini policy with support for interweaving text and images.
 
-    This policy properly handles messages that contain both text and images,
-    sending them in the correct format to Gemini and converting responses
-    back to pocket-joe Messages.
+    Uses the new google-genai SDK with proper async support.
 
     Args:
         observations: List of Messages representing conversation history + new input
         options: Set of allowed options the LLM can call
         model: Gemini model to use. Options:
-            - "gemini-2.5-flash-image" (default, optimized for images)
-            - "gemini-2.5-flash" (best price-performance)
+            - "gemini-2.5-flash" (default, best price-performance)
             - "gemini-2.5-flash-lite" (ultra fast)
             - "gemini-2.5-pro" (advanced reasoning)
-            - "gemini-3-pro-preview" (most intelligent)
-            - "gemini-2.0-flash-exp" (experimental)
+            - "gemini-2.0-flash" (previous gen)
 
     Returns:
         List of Messages containing text/image responses and/or option_call messages
     """
-    # Initialize Gemini
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError("GOOGLE_API_KEY environment variable must be set")
 
-    genai.configure(api_key=api_key)  # type: ignore[attr-defined]
+    # Create client
+    client = genai.Client(api_key=api_key)
 
     # Convert messages and tools
-    messages = observations_to_gemini_messages(observations)
+    contents = observations_to_gemini_contents(observations)
     tools = options_to_gemini_tools(options)
 
-    # Create model with or without tools
-    model_name = model
-
+    # Build config
     if tools:
-        model = genai.GenerativeModel(  # type: ignore[attr-defined]
-            model_name=model_name,
-            tools=tools
+        config = types.GenerateContentConfig(
+            temperature=0.7,
+            tools=tools,  # type: ignore[arg-type]  # List variance issue
+            # Disable automatic function calling - we handle it ourselves
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                disable=True
+            ),
         )
     else:
-        model = genai.GenerativeModel(model_name=model_name)  # type: ignore[attr-defined]
+        config = types.GenerateContentConfig(temperature=0.7)
 
-    # Generate response
-    response = model.generate_content(  # type: ignore[attr-defined]
-        messages,
-        generation_config={"temperature": 0.7}
+    # Async call - properly releases event loop while waiting
+    # Cast contents to satisfy type checker (runtime accepts list[Content])
+    response = await client.aio.models.generate_content(
+        model=model,
+        contents=contents,  # type: ignore[arg-type]
+        config=config,
     )
 
     # Convert response back to messages
-    new_messages = gemini_response_to_messages(response, policy="google_gemini")
+    new_messages = gemini_response_to_messages(response, policy_name="google_gemini")
 
     return new_messages
