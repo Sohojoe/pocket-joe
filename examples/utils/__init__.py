@@ -14,8 +14,13 @@ from .transcribe_youtube_policy import (
     transcribe_youtube_policy,
 )
 
+from .google_image_gen import (
+    google_gemini_policy_v1,
+)
+
 __all__ = [
     "openai_llm_policy_v1",
     "web_seatch_ddgs_policy",
     "transcribe_youtube_policy",
+    "google_gemini_policy_v1",
 ]
