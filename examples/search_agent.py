@@ -28,12 +28,9 @@ async def llm_policy(
         List of Messages containing text and/or option_call payloads.
     """
     adapter = CompletionsAdapter(observations, options)
-    client = CompletionsAdapter.client(
-        api_key=os.getenv("OPENROUTER_API_KEY"),
-        base_url="https://openrouter.ai/api/v1",
-    )
+    client = CompletionsAdapter.client()
     response = await client.chat.completions.create(
-        model="google/gemini-2.0-flash-001",
+        model="gpt-5-nano",
         messages=adapter.messages,  # type: ignore[arg-type]
         tools=adapter.tools or [],  # type: ignore[arg-type]
     )
