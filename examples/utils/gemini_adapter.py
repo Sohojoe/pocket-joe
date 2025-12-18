@@ -7,6 +7,7 @@ Install with: pip install google-genai
 """
 import base64
 import os
+from pathlib import Path
 from typing import Any
 import uuid
 
@@ -113,9 +114,9 @@ class GeminiAdapter:
                     if isinstance(part, TextPart):
                         parts.append(types.Part.from_text(text=part.text))
                     elif isinstance(part, MediaPart):
-                        if part.modality == "image":
-                            # TODO: Fetch and convert to bytes for inline_data
-                            parts.append(types.Part.from_text(text=f"[Image: {part.url}]"))
+                        gemini_part = self._encode_media_part(part)
+                        if gemini_part:
+                            parts.append(gemini_part)
 
                 role = "user" if msg.role_hint_for_llm == "user" else "model"
                 contents.append(types.Content(role=role, parts=parts))
@@ -177,6 +178,51 @@ class GeminiAdapter:
 
         return [types.Tool(function_declarations=function_declarations)]
     
+    def _encode_media_part(self, part: MediaPart) -> types.Part | None:
+        """Convert a MediaPart to a Gemini Part.
+        
+        Handles all three source types: url, path, data_b64.
+        """
+        if part.modality != "image":
+            # For non-image modalities, fall back to placeholder text
+            source = part.url or part.path or "[inline data]"
+            return types.Part.from_text(text=f"[{part.modality.title()}: {source}]")
+        
+        # Handle image modality
+        if part.data_b64:
+            # Inline base64 data
+            data = base64.b64decode(part.data_b64)
+            mime = part.mime or "image/png"
+            return types.Part.from_bytes(data=data, mime_type=mime)
+        
+        if part.path:
+            # Load from local file
+            file_path = Path(part.path)
+            if not file_path.exists():
+                return types.Part.from_text(text=f"[Image not found: {part.path}]")
+            data = file_path.read_bytes()
+            # Infer mime from extension if not provided
+            mime = part.mime
+            if not mime:
+                suffix = file_path.suffix.lower()
+                mime_map = {
+                    ".png": "image/png",
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".webp": "image/webp",
+                    ".gif": "image/gif",
+                }
+                mime = mime_map.get(suffix, "image/png")
+            return types.Part.from_bytes(data=data, mime_type=mime)
+        
+        if part.url:
+            # Remote URL - Gemini accepts URLs directly via from_uri
+            url_str = str(part.url)
+            mime = part.mime or "image/jpeg"
+            return types.Part.from_uri(file_uri=url_str, mime_type=mime)
+        
+        return None
+
     def _decode_response(
         self,
         response: types.GenerateContentResponse,
@@ -204,10 +250,8 @@ class GeminiAdapter:
 
             # Handle inline images in response
             elif part.inline_data and part.inline_data.data:
-                mime_type = part.inline_data.mime_type or "image/jpeg"
-                data_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
-                data_url = f"data:{mime_type};base64,{data_b64}"
-                builder.add_image(url=data_url, mime=mime_type)
+                mime_type = part.inline_data.mime_type or "image/png"
+                builder.add_image_bytes(data=part.inline_data.data, mime=mime_type)
                 has_content_parts = True
 
             # Handle function calls

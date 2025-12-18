@@ -7,8 +7,9 @@ This module defines the core message types used throughout the framework:
 - Builder classes for ergonomic message construction
 """
 
+import base64
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, ConfigDict, HttpUrl
+from pydantic import BaseModel, ConfigDict, HttpUrl, model_validator
 import uuid
 
 
@@ -27,19 +28,50 @@ class TextPart(BaseModel):
 class MediaPart(BaseModel):
     """Media content part of a message (image, audio, video, document).
 
-    Media is URL-based and modality-aware. The modality is required and
-    semantic, while MIME type is optional best-effort metadata.
+    Supports three mutually exclusive source types:
+    - url: Remote http/https URL
+    - path: Local file path
+    - data_b64: Base64-encoded bytes (JSON-serializable)
+
+    Exactly one source must be provided. The mime field is required when
+    using data_b64.
     """
     model_config = ConfigDict(frozen=True)
 
     kind: Literal["media"] = "media"
     modality: Literal["image", "audio", "video", "document"]
-    url: HttpUrl
 
-    # Optional metadata
-    mime: Optional[str] = None
+    # Source (exactly one required)
+    url: Optional[HttpUrl] = None  # Remote http/https URL
+    path: Optional[str] = None  # Local file path
+    data_b64: Optional[str] = None  # Base64-encoded bytes
+
+    # Metadata
+    mime: Optional[str] = None  # Required when using data_b64
     prompt_hint: Optional[str] = None  # Non-semantic label/description for prompts
     id: Optional[str] = None  # Internal correlation/replay aid
+
+    @model_validator(mode="after")
+    def validate_exactly_one_source(self) -> "MediaPart":
+        """Ensure exactly one source is provided and mime is set for data_b64."""
+        sources = sum(1 for s in [self.url, self.path, self.data_b64] if s is not None)
+        if sources == 0:
+            raise ValueError("MediaPart requires exactly one source: url, path, or data_b64")
+        if sources > 1:
+            raise ValueError("MediaPart accepts only one source: url, path, or data_b64")
+        if self.data_b64 is not None and self.mime is None:
+            raise ValueError("mime is required when using data_b64")
+        return self
+
+    def get_bytes(self) -> bytes:
+        """Decode and return the raw bytes from data_b64.
+        
+        Raises:
+            ValueError: If data_b64 is not set
+        """
+        if self.data_b64 is None:
+            raise ValueError("get_bytes() requires data_b64 to be set")
+        return base64.b64decode(self.data_b64)
 
 
 # Union type for all part types
@@ -135,6 +167,54 @@ class Message(BaseModel):
 
 
 # ============================================================================
+# Helper Functions
+# ============================================================================
+
+from collections.abc import Iterable, Iterator
+from typing import TypeVar, overload
+
+T = TypeVar("T", bound=Part)
+
+
+@overload
+def iter_parts(messages: Iterable[Message]) -> Iterator[Part]: ...
+@overload
+def iter_parts(messages: Iterable[Message], part_type: type[T]) -> Iterator[T]: ...
+
+
+def iter_parts(
+    messages: Iterable[Message],
+    part_type: type[T] | None = None,
+) -> Iterator[Part] | Iterator[T]:
+    """Iterate over parts from a sequence of messages.
+    
+    Args:
+        messages: Iterable of Message objects
+        part_type: Optional type to filter (e.g., TextPart, MediaPart)
+        
+    Yields:
+        Parts from all messages, optionally filtered by type
+        
+    Example:
+        # All parts
+        for part in iter_parts(messages):
+            print(part)
+            
+        # Only MediaParts
+        for media in iter_parts(messages, MediaPart):
+            print(media.mime)
+            
+        # First image with data
+        image = next((p for p in iter_parts(messages, MediaPart) if p.data_b64), None)
+    """
+    for msg in messages:
+        if msg.parts:
+            for part in msg.parts:
+                if part_type is None or isinstance(part, part_type):
+                    yield part
+
+
+# ============================================================================
 # Message Builders
 # ============================================================================
 
@@ -210,10 +290,52 @@ class MessageBuilder:
         mime: Optional[str] = None,
         media_id: Optional[str] = None,
     ) -> "MessageBuilder":
-        """Add an image media part to the message."""
+        """Add an image media part from a URL."""
         self._parts.append(MediaPart(
             modality="image",
             url=url,  # type: ignore
+            mime=mime,
+            prompt_hint=prompt_hint,
+            id=media_id,
+        ))
+        return self
+
+    def add_image_path(
+        self,
+        path: str,
+        prompt_hint: Optional[str] = None,
+        mime: Optional[str] = None,
+        media_id: Optional[str] = None,
+    ) -> "MessageBuilder":
+        """Add an image media part from a local file path."""
+        self._parts.append(MediaPart(
+            modality="image",
+            path=path,
+            mime=mime,
+            prompt_hint=prompt_hint,
+            id=media_id,
+        ))
+        return self
+
+    def add_image_bytes(
+        self,
+        data: bytes,
+        mime: str,
+        prompt_hint: Optional[str] = None,
+        media_id: Optional[str] = None,
+    ) -> "MessageBuilder":
+        """Add an image media part from raw bytes.
+        
+        Args:
+            data: Raw image bytes
+            mime: MIME type (required, e.g. "image/png")
+            prompt_hint: Optional description for prompts
+            media_id: Optional identifier
+        """
+        data_b64 = base64.b64encode(data).decode("utf-8")
+        self._parts.append(MediaPart(
+            modality="image",
+            data_b64=data_b64,
             mime=mime,
             prompt_hint=prompt_hint,
             id=media_id,

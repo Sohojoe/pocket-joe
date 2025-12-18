@@ -3,7 +3,7 @@
     "configurations": [
         {
             "name": "Debug Search Agent",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/examples/search_agent.py",
             "console": "integratedTerminal",
@@ -13,7 +13,7 @@
         },
         {
             "name": "Debug YouTube Summarizer",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/examples/youtube_summarizer.py",
             "console": "integratedTerminal",
@@ -23,7 +23,7 @@
         },
         {
             "name": "Debug Transcribe YouTube Demo",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/examples/transcribe_youtube_demo.py",
             "console": "integratedTerminal",
@@ -32,8 +32,18 @@
             }
         },
         {
+            "name": "Debug Image Edit Demo",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/image_edit.py",
+            "console": "integratedTerminal",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },        
+        {
             "name": "Debug Unit Tests",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             "purpose": ["debug-test"],

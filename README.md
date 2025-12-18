@@ -148,6 +148,46 @@ A correct, simple, performant, and pythonic framework for building durable AI ag
 
 > "There is no flow, only Policies and Actions."
 
+## Working with Media
+
+`MediaPart` supports three mutually exclusive sources for image/audio/video content:
+
+```python
+from pocket_joe import MessageBuilder, MediaPart, iter_parts
+
+# URL source - for remote images
+builder = MessageBuilder(policy="agent")
+builder.add_image(url="https://example.com/photo.png", mime="image/png")
+
+# Path source - for local files (adapter handles reading)
+builder.add_image_path(path="/path/to/image.png")
+
+# Bytes source - for generated/inline content (base64-encoded internally)
+builder.add_image_bytes(data=image_bytes, mime="image/png", prompt_hint="Generated cat")
+```
+
+### Iterating Over Parts
+
+Use `iter_parts()` to iterate over all parts across multiple messages with optional type filtering:
+
+```python
+from pocket_joe import iter_parts, MediaPart, TextPart
+
+# Find first image with inline data
+first_image = next(
+    (p for p in iter_parts(messages, MediaPart) if p.data_b64),
+    None
+)
+if first_image:
+    raw_bytes = first_image.get_bytes()
+
+# Check if any images exist
+has_images = any(iter_parts(messages, MediaPart))
+
+# Get all text content
+all_text = [p.text for p in iter_parts(messages, TextPart)]
+```
+
 ## Getting Started
 
 ### Prerequisites

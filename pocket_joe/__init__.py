@@ -8,6 +8,7 @@ from .message import (
     Payload,
     MessageBuilder,
     OptionResultBuilder,
+    iter_parts,
 )
 from .memory_runtime import InMemoryRunner
 from .policy_decorators import policy
@@ -22,6 +23,7 @@ __all__ = [
     "Payload",
     "MessageBuilder",
     "OptionResultBuilder",
+    "iter_parts",
     "BaseContext",
     "policy",
     "OptionSchema",
